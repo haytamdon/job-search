@@ -10,7 +10,6 @@ import {
   AlertCircle, 
   CheckCircle, 
   Loader2, 
-  Filter, 
   RefreshCw,
   Sun,
   Moon,
@@ -74,6 +73,8 @@ export default function App() {
   const [jobTitle, setJobTitle] = useState('AI engineer');
   const [limit, setLimit] = useState(150);
   const [lastDays, setLastDays] = useState(30);
+  const [experienceYears, setExperienceYears] = useState<number | ''>('');
+  const [workplaceType, setWorkplaceType] = useState('all');
 
   // UI toggles
   const [showRawLogs, setShowRawLogs] = useState(false);
@@ -90,8 +91,10 @@ export default function App() {
   const [selectedTask, setSelectedTask] = useState<SelectedTaskDetail | null>(null);
   const [parsedJobs, setParsedJobs] = useState<ParsedJob[]>([]);
   
-  // Table search filter
+  // Table search filters
   const [searchTerm, setSearchTerm] = useState('');
+  const [resultsWorkplaceFilter, setResultsWorkplaceFilter] = useState('all');
+  const [resultsMinSalaryFilter, setResultsMinSalaryFilter] = useState('');
   
   // Health status
   const [health, setHealth] = useState({
@@ -257,7 +260,7 @@ export default function App() {
           company: jobObj.company || jobObj.employer || 'Company',
           location: jobObj.location || 'Location',
           salaryrange: jobObj.salaryrange || jobObj.salary || 'N/A',
-          description: jobObj.description || jobObj.summary || '',
+          description: jobObj.descriptionsummary || jobObj.description || jobObj.summary || '',
           publishingdate: jobObj.publishingdate || jobObj.date || 'N/A',
           link: jobObj.link || 'Apply Link',
           link_url: jobObj.link_url || jobObj.url || ''
@@ -351,7 +354,9 @@ export default function App() {
         country,
         job_title: jobTitle,
         limit,
-        last_days: lastDays
+        last_days: lastDays,
+        experience_years: experienceYears !== '' ? Number(experienceYears) : null,
+        workplace_type: workplaceType
       });
       
       const newTaskId = response.data.task_id;
@@ -363,15 +368,61 @@ export default function App() {
     }
   };
 
-  // Filter jobs based on search term
+  // Filter jobs based on search term and criteria
   const filteredJobs = parsedJobs.filter(job => {
+    // 1. Search term match
     const term = searchTerm.toLowerCase();
-    return (
+    const matchesSearch = term === '' || (
       job.title.toLowerCase().includes(term) ||
       job.company.toLowerCase().includes(term) ||
       job.location.toLowerCase().includes(term) ||
       job.description.toLowerCase().includes(term)
     );
+
+    // 2. Workplace Filter match
+    let matchesWorkplace = true;
+    if (resultsWorkplaceFilter !== 'all') {
+      const textToSearch = `${job.location} ${job.title} ${job.description}`.toLowerCase();
+      if (resultsWorkplaceFilter === 'remote') {
+        matchesWorkplace = textToSearch.includes('remote') || textToSearch.includes('wfh') || textToSearch.includes('work from home');
+      } else if (resultsWorkplaceFilter === 'hybrid') {
+        matchesWorkplace = textToSearch.includes('hybrid');
+      } else if (resultsWorkplaceFilter === 'on-site') {
+        matchesWorkplace = textToSearch.includes('on-site') || textToSearch.includes('onsite') || (!textToSearch.includes('remote') && !textToSearch.includes('hybrid'));
+      }
+    }
+
+    // 3. Salary Filter match
+    let matchesSalary = true;
+    if (resultsMinSalaryFilter !== '') {
+      const salaryText = (job.salaryrange || '').toLowerCase();
+      const filterNumStr = resultsMinSalaryFilter.replace(/[^0-9]/g, '');
+      const filterVal = filterNumStr ? parseInt(filterNumStr, 10) : 0;
+      
+      if (filterVal > 0) {
+        // Try to extract numbers from salaryText
+        const salaryNums = salaryText.replace(/,/g, '').match(/\d+/g);
+        if (salaryNums && salaryNums.length > 0) {
+          const parsedNums = salaryNums.map(n => {
+            let val = parseInt(n, 10);
+            if (val < 1000 && (salaryText.includes('k') || salaryText.includes('thousand'))) {
+              val *= 1000;
+            }
+            return val;
+          });
+          const actualFilterVal = filterVal < 1000 ? filterVal * 1000 : filterVal;
+          const maxSalary = Math.max(...parsedNums);
+          const maxSalaryScaled = maxSalary < 1000 ? maxSalary * 1000 : maxSalary;
+          matchesSalary = maxSalaryScaled >= actualFilterVal;
+        } else {
+          matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
+        }
+      } else {
+        matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
+      }
+    }
+
+    return matchesSearch && matchesWorkplace && matchesSalary;
   });
 
   // Keyboard shortcut listeners
@@ -539,6 +590,47 @@ export default function App() {
                 aria-valuemax={60}
                 aria-valuenow={lastDays}
               />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Experience Years</label>
+                <input 
+                  type="number" 
+                  min="0"
+                  max="25"
+                  value={experienceYears} 
+                  onChange={(e) => setExperienceYears(e.target.value === '' ? '' : parseInt(e.target.value))} 
+                  disabled={isLoading}
+                  placeholder="Any"
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Office Setup</label>
+                <select 
+                  value={workplaceType} 
+                  onChange={(e) => setWorkplaceType(e.target.value)} 
+                  disabled={isLoading}
+                  style={{ 
+                    width: '100%', 
+                    background: 'var(--bg-color)', 
+                    color: 'var(--text-main)', 
+                    border: '1px solid var(--panel-border)', 
+                    borderRadius: '6px', 
+                    padding: '0.45rem 0.5rem', 
+                    fontSize: '0.82rem', 
+                    outline: 'none',
+                    height: '2rem'
+                  }}
+                >
+                  <option value="all">Any</option>
+                  <option value="remote">Remote</option>
+                  <option value="hybrid">Hybrid</option>
+                  <option value="on-site">On-site</option>
+                </select>
+              </div>
             </div>
 
             <button 
@@ -767,27 +859,59 @@ export default function App() {
                 </p>
               </div>
               
-              {/* Dynamic Table search */}
+              {/* Dynamic Table search & multi-criteria filters */}
               {parsedJobs.length > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginLeft: 'auto', flexWrap: 'wrap' }}>
                   <button 
                     type="button" 
                     onClick={downloadCSV}
                     className="btn-apply"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', height: '1.9rem', fontSize: '0.78rem', background: 'var(--panel-bg)', cursor: 'pointer' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', height: '2.1rem', fontSize: '0.78rem', background: 'var(--panel-bg)', cursor: 'pointer', padding: '0 0.75rem' }}
                     title="Export matching jobs to CSV"
                   >
                     <Download size={12} />
                     Save as Excel (CSV)
                   </button>
-                  <div className="datatable-filter">
-                    <Filter size={12} style={{ color: 'var(--text-muted)' }} />
+                  
+                  {/* Keyword search input (enlarged) */}
+                  <div className="datatable-filter" style={{ minWidth: '240px', height: '2.1rem', padding: '0 0.75rem' }}>
+                    <Search size={12} style={{ color: 'var(--text-muted)' }} />
                     <input 
                       type="text" 
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Search results by keyword..."
-                      style={{ border: 'none', background: 'none', color: 'var(--text-main)', fontSize: '0.78rem', width: '160px', padding: 0, outline: 'none' }}
+                      placeholder="Search title, company, skills..."
+                      style={{ border: 'none', background: 'none', color: 'var(--text-main)', fontSize: '0.78rem', width: '100%', padding: 0, outline: 'none' }}
+                      aria-label="Result keyword search"
+                    />
+                  </div>
+
+                  {/* Workplace Setup Criteria Filter */}
+                  <div className="datatable-filter" style={{ minWidth: '135px', height: '2.1rem', padding: '0 0.5rem' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, marginRight: '0.25rem', whiteSpace: 'nowrap' }}>Setup:</span>
+                    <select
+                      value={resultsWorkplaceFilter}
+                      onChange={(e) => setResultsWorkplaceFilter(e.target.value)}
+                      style={{ border: 'none', background: 'none', color: 'var(--text-main)', fontSize: '0.78rem', width: '100%', outline: 'none', cursor: 'pointer' }}
+                      aria-label="Workplace Setup Filter"
+                    >
+                      <option value="all">All Setup</option>
+                      <option value="remote">Remote WFH</option>
+                      <option value="hybrid">Hybrid</option>
+                      <option value="on-site">On-site</option>
+                    </select>
+                  </div>
+
+                  {/* Salary Threshold Criteria Filter */}
+                  <div className="datatable-filter" style={{ minWidth: '150px', height: '2.1rem', padding: '0 0.5rem' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, marginRight: '0.25rem', whiteSpace: 'nowrap' }}>Min Salary:</span>
+                    <input
+                      type="text"
+                      value={resultsMinSalaryFilter}
+                      onChange={(e) => setResultsMinSalaryFilter(e.target.value)}
+                      placeholder="e.g. 80k or 100000"
+                      style={{ border: 'none', background: 'none', color: 'var(--text-main)', fontSize: '0.78rem', width: '100%', outline: 'none', padding: 0 }}
+                      aria-label="Minimum Salary Filter"
                     />
                   </div>
                 </div>
@@ -818,9 +942,10 @@ export default function App() {
                       <thead>
                         <tr>
                           <th>Job Title</th>
-                          <th>Employer</th>
+                          <th>Company</th>
                           <th>City / Country</th>
                           <th>Salary Estimate</th>
+                          <th>Description Summary</th>
                           <th>Relocation Support</th>
                           <th>Apply Link</th>
                         </tr>
@@ -832,6 +957,22 @@ export default function App() {
                             <td>{job.company}</td>
                             <td>{job.location}</td>
                             <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
+                            <td>
+                              <div style={{ 
+                                maxWidth: '240px', 
+                                fontSize: '0.78rem', 
+                                color: 'var(--text-muted)',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'normal',
+                                lineHeight: '1.3'
+                              }} title={job.description}>
+                                {job.description || 'N/A'}
+                              </div>
+                            </td>
                             <td>
                               <span className="badge badge-relocation">
                                 Visa Support

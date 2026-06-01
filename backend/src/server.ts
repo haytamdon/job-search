@@ -93,7 +93,7 @@ app.get('/health', async (req, res) => {
 app.get('/api/jobs/history', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, country, job_title, limit_count, last_days, status, progress, error_message, created_at, completed_at FROM search_tasks ORDER BY created_at DESC'
+      'SELECT id, country, job_title, limit_count, last_days, status, progress, error_message, created_at, completed_at, experience_years, workplace_type FROM search_tasks ORDER BY created_at DESC'
     );
     res.json(result.rows);
   } catch (err: any) {
@@ -126,16 +126,23 @@ app.delete('/api/jobs/tasks/:id', async (req, res) => {
 
 // POST /api/jobs/search - Trigger an asynchronous job search
 app.post('/api/jobs/search', async (req, res) => {
-  const { country = 'Germany', job_title = 'AI engineer', limit = 150, last_days = 30 } = req.body;
+  const { 
+    country = 'Germany', 
+    job_title = 'AI engineer', 
+    limit = 150, 
+    last_days = 30,
+    experience_years = null,
+    workplace_type = 'all'
+  } = req.body;
   const taskId = uuidv4();
   const createdAt = new Date().toISOString();
   
   try {
     // 1. Insert search task into PostgreSQL
     await db.query(
-      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, status, progress, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'PENDING', 'Task queued.', $6)`,
-      [taskId, country, job_title, limit, last_days, createdAt]
+      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, experience_years, workplace_type, status, progress, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', 'Task queued.', $8)`,
+      [taskId, country, job_title, limit, last_days, experience_years, workplace_type, createdAt]
     );
     
     // 2. Call Python microservice to trigger search
@@ -144,7 +151,9 @@ app.post('/api/jobs/search', async (req, res) => {
       country,
       job_title,
       limit,
-      last_days
+      last_days,
+      experience_years,
+      workplace_type
     });
     
     const pythonTaskId = msResponse.data.task_id;
