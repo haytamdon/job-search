@@ -89,7 +89,7 @@ async def run_search_logic(
     )
     
     # Create agent with memory enabled
-    agent = MCPAgent(llm=llm, client=client, max_steps=1000, pretty_print=True, memory_enabled=True)
+    agent = MCPAgent(llm=llm, client=client, max_steps=1000, pretty_print=True, memory_enabled=False)
     
     # Ensure local directory for backup saves exists
     os.makedirs("jobs1", exist_ok=True)
