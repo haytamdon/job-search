@@ -1,0 +1,73 @@
+services:
+
+  # 1. PostgreSQL Database
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: jobsearch-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jobsearch
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - platform-net
+
+  # 2. Python Search Agent Microservice
+  microservice-job-search:
+    build:
+      context: ./microservices/job-search
+      dockerfile: Dockerfile
+    container_name: jobsearch-python-agent
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN}
+    networks:
+      - platform-net
+
+  # 3. TypeScript Express Gateway API Orchestrator
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jobsearch-ts-gateway
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres-db:5432/jobsearch
+      - MICROSERVICE_URL=http://microservice-job-search:8000
+    depends_on:
+      - postgres-db
+      - microservice-job-search
+    networks:
+      - platform-net
+
+  # 4. React Frontend Served via Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jobsearch-react-dashboard
+    restart: always
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - platform-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  platform-net:
+    driver: bridge

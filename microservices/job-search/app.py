@@ -29,7 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory database for tracking jobs/tasks
+# In-memory database for tracking jobs/tasks (Note: gateway will now persist to PostgreSQL)
 tasks_db: Dict[str, Dict] = {}
 
 class SearchRequest(BaseModel):
@@ -37,7 +37,6 @@ class SearchRequest(BaseModel):
     job_title: str = Field(default="AI engineer", description="Job title to search.")
     limit: int = Field(default=150, description="Minimum number of jobs to request.")
     last_days: int = Field(default=30, description="Lookback window in days.")
-
 
 class TaskResponse(BaseModel):
     task_id: str
