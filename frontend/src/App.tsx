@@ -813,7 +813,7 @@ export default function App() {
                   </div>
                   
                   {/* High-density zebra styled datatable */}
-                  <div className="table-container" style={{ flex: 1, overflowY: 'auto' }}>
+                  <div className="table-container">
                     <table>
                       <thead>
                         <tr>
