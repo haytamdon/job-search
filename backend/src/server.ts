@@ -114,6 +114,16 @@ app.get('/api/jobs/tasks/:id', async (req, res) => {
   }
 });
 
+// DELETE /api/jobs/tasks/:id - Delete a specific search task and its results from history
+app.delete('/api/jobs/tasks/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
+    res.json({ success: true, message: `Task ${req.params.id} successfully deleted.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/jobs/search - Trigger an asynchronous job search
 app.post('/api/jobs/search', async (req, res) => {
   const { country = 'Germany', job_title = 'AI engineer', limit = 150, last_days = 30 } = req.body;

@@ -5,16 +5,17 @@ import {
   Search, 
   MapPin, 
   Clock, 
-  Database, 
-  Cpu, 
   Activity, 
-  History, 
   ExternalLink, 
   AlertCircle, 
   CheckCircle, 
   Loader2, 
   Filter, 
-  RefreshCw 
+  RefreshCw,
+  Sun,
+  Moon,
+  Trash2,
+  Download
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:3000';
@@ -50,11 +51,32 @@ interface ParsedJob {
 }
 
 export default function App() {
+  // Theme state
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    return 'light'; // Default to light mode
+  });
+
+  // Sync theme with HTML document element class
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('theme-dark');
+    } else {
+      root.classList.remove('theme-dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
   // Input parameters
   const [country, setCountry] = useState('Germany');
   const [jobTitle, setJobTitle] = useState('AI engineer');
   const [limit, setLimit] = useState(150);
   const [lastDays, setLastDays] = useState(30);
+
+  // UI toggles
+  const [showRawLogs, setShowRawLogs] = useState(false);
 
   // App states
   const [history, setHistory] = useState<TaskHistory[]>([]);
@@ -89,6 +111,71 @@ export default function App() {
     } catch (err) {
       console.error('Error fetching history:', err);
     }
+  };
+
+  // Delete task record from database history
+  const deleteTaskDetail = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); // Prevent card selection click trigger
+    if (!window.confirm('Are you sure you want to permanently delete this search log from the database?')) return;
+    try {
+      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
+      if (selectedTask?.id === id) {
+        setSelectedTask(null);
+        setParsedJobs([]);
+      }
+      fetchHistory();
+    } catch (err) {
+      console.error('Error deleting task:', err);
+    }
+  };
+
+  // Export matching job listings to CSV
+  const downloadCSV = () => {
+    if (filteredJobs.length === 0) return;
+    try {
+      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Classification', 'Apply Link'];
+      const csvRows = [];
+      csvRows.push(headers.join(','));
+
+      filteredJobs.forEach(job => {
+        const row = [
+          `"${job.title.replace(/"/g, '""')}"`,
+          `"${job.company.replace(/"/g, '""')}"`,
+          `"${job.location.replace(/"/g, '""')}"`,
+          `"${(job.salaryrange || 'N/A').replace(/"/g, '""')}"`,
+          '"Visa Sponsor"',
+          `"${(job.link_url || '').replace(/"/g, '""')}"`
+        ];
+        csvRows.push(row.join(','));
+      });
+
+      const csvContent = csvRows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      const filename = `${selectedTask?.job_title.toLowerCase().replace(/\s+/g, '_')}_${selectedTask?.country.toLowerCase()}_jobs.csv`;
+      link.setAttribute('download', filename);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('Failed to export CSV:', err);
+    }
+  };
+
+  // Helper to map log progress to step indices (0-4)
+  const getActiveProgressStep = (progress: string, status: string): number => {
+    if (status === 'COMPLETED') return 5;
+    if (status === 'FAILED') return -1;
+    
+    const lower = progress.toLowerCase();
+    if (lower.includes('saving') || lower.includes('database') || lower.includes('postgres') || lower.includes('done')) return 4;
+    if (lower.includes('evaluat') || lower.includes('structur') || lower.includes('pars') || lower.includes('markdown') || lower.includes('table')) return 3;
+    if (lower.includes('routing') || lower.includes('scraping') || lower.includes('linkedin') || lower.includes('scan') || lower.includes('agent')) return 2;
+    if (lower.includes('spawning') || lower.includes('langchain') || lower.includes('openrouter') || lower.includes('client')) return 1;
+    return 0;
   };
 
   // Fetch health check
@@ -234,7 +321,7 @@ export default function App() {
     if (logConsoleEndRef.current) {
       logConsoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeTask?.progress]);
+  }, [activeTask?.progress, showRawLogs]);
 
   // Trigger search trigger
   const triggerSearch = async (e: React.FormEvent) => {
@@ -273,344 +360,536 @@ export default function App() {
     );
   });
 
+  // Keyboard shortcut listeners
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput = activeEl && (
+        activeEl.tagName === 'INPUT' || 
+        activeEl.tagName === 'SELECT' || 
+        activeEl.tagName === 'TEXTAREA'
+      );
+
+      // CMD+Enter or Ctrl+Enter to trigger search scans
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        const searchForm = document.querySelector('sidebar-nav form') || document.querySelector('form');
+        if (searchForm) {
+          searchForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+
+      // CMD+K or '/' to focus matches keyword search match input (only when not typing in form)
+      if (!isInput && (e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'))) {
+        e.preventDefault();
+        const filterInput = document.querySelector('.datatable-filter input') as HTMLInputElement;
+        if (filterInput) {
+          filterInput.focus();
+          filterInput.select();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filteredJobs, selectedTask]);
+
   return (
-    <div>
-      {/* Navbar Header */}
-      <header className="glass-panel" style={{ margin: '1.5rem', padding: '1rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '6px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ background: 'var(--primary)', padding: '0.5rem', borderRadius: '4px', display: 'flex', alignItems: 'center' }}>
-            <Briefcase style={{ color: 'white' }} size={24} />
+    <div className="app-layout">
+      {/* LEFT COLUMN: Sidebar Navigation */}
+      <aside className="sidebar-nav">
+        {/* Brand Logo & Theme Toggler */}
+        <div className="sidebar-brand">
+          <div className="brand-title-group">
+            <div className="sidebar-logo">
+              <Briefcase size={18} />
+            </div>
+            <div>
+              <h1 style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                JobAgent Portal
+                <span className="brand-dot" />
+              </h1>
+              <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Multi-Microservices AI Engine</p>
+            </div>
           </div>
-          <div>
-            <h1 style={{ fontSize: '1.3rem' }} className="gradient-text">JobAgent Portal</h1>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Multi-Microservices AI Relocation Search</p>
+          <button 
+            type="button" 
+            className="theme-toggle-btn"
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
+            aria-label="Toggle Theme"
+          >
+            {theme === 'light' ? <Moon size={14} /> : <Sun size={14} />}
+          </button>
+        </div>
+
+        {/* System Diagnostics Health gauges */}
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">
+            <span>System Status</span>
+            <Activity size={11} />
+          </div>
+          <div className="diagnostics-stack">
+            <div className="diagnostic-item">
+              <span>Dashboard Service</span>
+              <div className="diagnostic-status">
+                <span className={`status-dot ${health.gateway === 'online' ? 'online' : 'offline'}`} />
+                <span>{health.gateway === 'online' ? 'OPERATIONAL' : 'OFFLINE'}</span>
+              </div>
+            </div>
+            <div className="diagnostic-item">
+              <span>Database Storage</span>
+              <div className="diagnostic-status">
+                <span className={`status-dot ${health.database === 'online' ? 'online' : health.database === 'error' ? 'warning' : 'offline'}`} />
+                <span>{health.database === 'online' ? 'OPERATIONAL' : health.database === 'error' ? 'WARNING' : 'OFFLINE'}</span>
+              </div>
+            </div>
+            <div className="diagnostic-item">
+              <span>AI Search Engine</span>
+              <div className="diagnostic-status">
+                <span className={`status-dot ${health.microservice === 'online' ? 'online' : 'offline'}`} />
+                <span>{health.microservice === 'online' ? 'OPERATIONAL' : 'OFFLINE'}</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Health Monitors */}
-        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', fontWeight: 600 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: health.gateway === 'online' ? 'var(--success)' : 'var(--danger)' }}>
-            <Activity size={16} />
-            <span>Gateway API: {health.gateway.toUpperCase()}</span>
+        {/* Search Parameter Options Form */}
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">
+            <span>Scan Options</span>
+            <Search size={11} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: health.database === 'online' ? 'var(--success)' : health.database === 'error' ? 'var(--warning)' : 'var(--danger)' }}>
-            <Database size={16} />
-            <span>PostgreSQL: {health.database.toUpperCase()}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: health.microservice === 'online' ? 'var(--success)' : 'var(--danger)' }}>
-            <Cpu size={16} />
-            <span>Search Agent: {health.microservice.toUpperCase()}</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Grid Section */}
-      <main className="dashboard-grid">
-        {/* Left column panels */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          
-          {/* Query Console Form */}
-          <section className="glass-panel">
-            <div className="card-header">
-              <h2 style={{ fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Search size={18} style={{ color: 'var(--primary-hover)' }} />
-                Agent Search Console
-              </h2>
-              {isLoading && <Loader2 className="pulse-active" size={18} style={{ color: 'var(--primary-hover)' }} />}
+          <form onSubmit={triggerSearch}>
+            <div className="form-group">
+              <label>Target Job Title</label>
+              <input 
+                type="text" 
+                value={jobTitle} 
+                onChange={(e) => setJobTitle(e.target.value)} 
+                required 
+                disabled={isLoading}
+                placeholder="e.g. AI engineer"
+              />
             </div>
-            
-            <form onSubmit={triggerSearch} className="card-body">
-              <div className="form-group">
-                <label>Job Title</label>
-                <input 
-                  type="text" 
-                  value={jobTitle} 
-                  onChange={(e) => setJobTitle(e.target.value)} 
-                  required 
-                  disabled={isLoading}
-                  placeholder="e.g. AI engineer, Data Scientist"
-                />
-              </div>
 
-              <div className="form-group">
-                <label>Country Destination</label>
-                <input 
-                  type="text" 
-                  value={country} 
-                  onChange={(e) => setCountry(e.target.value)} 
-                  required 
-                  disabled={isLoading}
-                  placeholder="e.g. Germany, Netherlands"
-                />
-              </div>
-
-              <div className="form-group">
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                  <label>Required Job Limit</label>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--primary-hover)', fontWeight: 600 }}>{limit} jobs</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="10" 
-                  max="300" 
-                  step="10"
-                  value={limit} 
-                  onChange={(e) => setLimit(parseInt(e.target.value))} 
-                  disabled={isLoading}
-                  style={{ accentColor: 'var(--primary)' }}
-                />
-              </div>
-
-              <div className="form-group">
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                  <label>Age of Postings</label>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--primary-hover)', fontWeight: 600 }}>Last {lastDays} days</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="5" 
-                  max="60" 
-                  step="5"
-                  value={lastDays} 
-                  onChange={(e) => setLastDays(parseInt(e.target.value))} 
-                  disabled={isLoading}
-                  style={{ accentColor: 'var(--primary)' }}
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                className="btn-glow" 
-                style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
-                disabled={isLoading || health.gateway === 'offline'}
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="pulse-active" size={18} />
-                    Scanning Job Market...
-                  </>
-                ) : (
-                  <>
-                    <Search size={18} />
-                    Scan Visa Jobs
-                  </>
-                )}
-              </button>
-            </form>
-          </section>
-
-          {/* Search task History list */}
-          <section className="glass-panel" style={{ flexGrow: 1, minHeight: '300px' }}>
-            <div className="card-header">
-              <h2 style={{ fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <History size={18} style={{ color: 'var(--primary-hover)' }} />
-                PostgreSQL Search History
-              </h2>
-              <button 
-                onClick={fetchHistory} 
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-                title="Refresh History"
-              >
-                <RefreshCw size={16} />
-              </button>
+            <div className="form-group">
+              <label>Destination Country</label>
+              <input 
+                type="text" 
+                value={country} 
+                onChange={(e) => setCountry(e.target.value)} 
+                required 
+                disabled={isLoading}
+                placeholder="e.g. Germany"
+              />
             </div>
-            
-            <div className="card-body" style={{ maxHeight: '350px', overflowY: 'auto', padding: '0.75rem' }}>
-              {history.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  No historical search queries logged in database.
-                </div>
+
+            <div className="form-group">
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <label>Max Jobs to Scan</label>
+                <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>{limit} listings</span>
+              </div>
+              <input 
+                type="range" 
+                min="10" 
+                max="300" 
+                step="10"
+                value={limit} 
+                onChange={(e) => setLimit(parseInt(e.target.value))} 
+                disabled={isLoading}
+                style={{ width: '100%' }}
+                aria-label="Max Jobs Slider"
+                aria-valuemin={10}
+                aria-valuemax={300}
+                aria-valuenow={limit}
+              />
+            </div>
+
+            <div className="form-group">
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <label>Scraping Timeframe</label>
+                <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>Last {lastDays} days</span>
+              </div>
+              <input 
+                type="range" 
+                min="5" 
+                max="60" 
+                step="5"
+                value={lastDays} 
+                onChange={(e) => setLastDays(parseInt(e.target.value))} 
+                disabled={isLoading}
+                style={{ width: '100%' }}
+                aria-label="Timeframe Slider"
+                aria-valuemin={5}
+                aria-valuemax={60}
+                aria-valuenow={lastDays}
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              className="btn-glow" 
+              style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
+              disabled={isLoading || health.gateway === 'offline'}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="pulse-active" size={16} />
+                  Scanning Market...
+                </>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {history.map((task) => (
-                    <div 
-                      key={task.id} 
-                      onClick={() => !isLoading && selectTaskDetail(task.id)}
-                      className="glass-panel"
-                      style={{ 
-                        padding: '0.75rem', 
-                        cursor: isLoading ? 'not-allowed' : 'pointer', 
-                        fontSize: '0.85rem',
-                        borderColor: selectedTask?.id === task.id ? 'var(--primary)' : 'var(--panel-border)',
-                        background: selectedTask?.id === task.id ? 'var(--primary-glow)' : '#ffffff'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontWeight: 600 }}>
-                        <span>{task.job_title}</span>
-                        <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`}>
-                          {task.status}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                          <MapPin size={12} />
-                          {task.country}
-                        </span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-                          <Clock size={12} />
-                          {new Date(task.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <>
+                  <Search size={16} />
+                  Scan Visa Jobs
+                </>
               )}
-            </div>
-          </section>
+            </button>
+          </form>
         </div>
 
-        {/* Right column details and datatables */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Database Search History list */}
+        <div className="sidebar-section" style={{ borderBottom: 'none', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '220px' }}>
+          <div className="sidebar-section-title">
+            <span>Search History</span>
+            <button 
+              onClick={fetchHistory} 
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+              title="Refresh History"
+            >
+              <RefreshCw size={11} />
+            </button>
+          </div>
           
-          {/* Active Job tracker loader console */}
-          {activeTask && (
-            <section className="glass-panel" style={{ borderColor: 'var(--primary)' }}>
-              <div className="card-header">
-                <h2 style={{ fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Loader2 className="pulse-active" size={18} style={{ color: 'var(--primary-hover)' }} />
-                  Active Search Monitor: {activeTask.job_title} in {activeTask.country}
-                </h2>
-                <span className="badge badge-status badge-status-running">
-                  {activeTask.status}
-                </span>
+          <div className="history-feed" style={{ flex: 1 }}>
+            {history.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                No previous searches found.
               </div>
-              <div className="card-body">
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                  The MCPAgent is executing LinkedIn job scraping with visa Relocation filtering logic...
-                </p>
-                <div className="progress-console">
-                  <div style={{ marginBottom: '0.25rem', color: 'var(--text-muted)' }}>
-                    [{new Date().toLocaleTimeString()}] System connection established.
+            ) : (
+              history.map((task) => (
+                <div 
+                  key={task.id} 
+                  onClick={() => !isLoading && selectTaskDetail(task.id)}
+                  className={`history-item ${selectedTask?.id === task.id ? 'selected' : ''}`}
+                  style={{ cursor: isLoading ? 'not-allowed' : 'pointer', marginBottom: '0.5rem' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontWeight: 600, alignItems: 'center' }}>
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
+                      {task.job_title}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
+                        {task.status}
+                      </span>
+                      <button 
+                        type="button" 
+                        onClick={(e) => deleteTaskDetail(e, task.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.1rem', display: 'flex', color: 'var(--text-muted)' }}
+                        title="Remove search history"
+                        className="btn-icon"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ marginBottom: '0.25rem', color: 'var(--text-muted)' }}>
-                    [{new Date().toLocaleTimeString()}] Spawning LangChain agent with Claude 3.5.
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                      <MapPin size={10} />
+                      {task.country}
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                      <Clock size={10} />
+                      {new Date(task.created_at).toLocaleDateString()}
+                    </span>
                   </div>
-                  <div style={{ color: '#10b981', fontWeight: 'bold' }}>
-                    &gt; {activeTask.progress}
-                  </div>
-                  <div ref={logConsoleEndRef} />
                 </div>
-              </div>
-            </section>
-          )}
+              ))
+            )}
+          </div>
+        </div>
+      </aside>
 
-          {/* Error alerts */}
-          {error && (
-            <div className="glass-panel" style={{ borderColor: 'var(--danger)', background: 'rgba(239, 68, 68, 0.05)', padding: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <AlertCircle style={{ color: 'var(--danger)' }} />
-              <div>
-                <h3 style={{ fontSize: '0.9rem', color: 'var(--danger)' }}>Agent Execution Error</h3>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{error}</p>
+      {/* RIGHT COLUMN: Workspace Content Area */}
+      <main className="main-workspace">
+        {/* Workspace Context Navigation Header */}
+        <div className="workspace-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div className="sidebar-logo" style={{ background: 'var(--panel-border-glow)', color: 'var(--text-main)' }}>
+              <Briefcase size={14} />
+            </div>
+            <div>
+              <h2 style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                {selectedTask 
+                  ? `Scanned Jobs: ${selectedTask.job_title} in ${selectedTask.country}` 
+                  : activeTask 
+                    ? `Workspace: AI Search Assistant Active` 
+                    : 'Search Dashboard'}
+              </h2>
+            </div>
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500, fontFamily: 'monospace' }}>
+            {selectedTask 
+              ? `ID: ${selectedTask.id.substring(0, 8)}...` 
+              : activeTask 
+                ? 'AI SEARCH RUNNING' 
+                : 'STORAGE STATUS: ACTIVE'}
+          </div>
+        </div>
+
+        {/* Active Search Monitor with friendly visual progress bar checklist */}
+        {activeTask && (
+          <div className="panel-card" style={{ borderColor: 'var(--primary)', marginBottom: '1.5rem' }}>
+            <div className="card-header">
+              <h2 style={{ fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Loader2 className="pulse-active" size={16} style={{ color: 'var(--primary)' }} />
+                AI Assistant is Scanning the Job Market
+              </h2>
+              <span className="badge badge-status badge-status-running">
+                Running
+              </span>
+            </div>
+            <div className="card-body">
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+                The AI is looking for up to {activeTask.limit_count} job postings posted on LinkedIn within the last {activeTask.last_days} days.
+              </p>
+
+              {/* Graphical Step Checklist for easy non-tech understanding */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                {[
+                  { label: 'Connecting to the AI service engine', step: 0 },
+                  { label: 'Initializing the LinkedIn scraper agent', step: 1 },
+                  { label: 'Scanning LinkedIn for visa-friendly job leads', step: 2 },
+                  { label: 'Evaluating relocation & sponsorship details', step: 3 },
+                  { label: 'Saving search results safely to your storage', step: 4 }
+                ].map((item, idx) => {
+                  const currentStep = getActiveProgressStep(activeTask.progress, activeTask.status);
+                  const isDone = currentStep > item.step;
+                  const isActive = currentStep === item.step;
+                  
+                  return (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.82rem' }}>
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.65rem',
+                        fontWeight: 700,
+                        background: isDone ? 'var(--success-glow)' : isActive ? 'var(--primary-glow)' : 'var(--bg-color)',
+                        color: isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--text-muted)',
+                        border: `1px solid ${isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--panel-border)'}`,
+                        transition: 'all 0.3s ease'
+                      }}>
+                        {isDone ? '✓' : idx + 1}
+                      </div>
+                      <span style={{
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? 'var(--text-main)' : 'var(--text-muted)',
+                        transition: 'all 0.3s ease'
+                      }}>
+                        {item.label}
+                        {isActive && ' (Active...)'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Technical logs hidden behind progressive disclosure switch */}
+              <div style={{ borderTop: '1px solid var(--panel-border)', paddingTop: '0.85rem' }}>
+                <button
+                  type="button"
+                  className="btn-apply"
+                  onClick={() => setShowRawLogs(!showRawLogs)}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
+                >
+                  {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
+                </button>
+                
+                {showRawLogs && (
+                  <div className="progress-console" style={{ marginTop: '0.75rem' }}>
+                    <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                      [{new Date().toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
+                    </div>
+                    <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                      [{new Date().toLocaleTimeString()}] Claude 3.5 routing queries to LinkedIn API gateway.
+                    </div>
+                    <div style={{ color: '#10b981', fontWeight: 'bold' }}>
+                      &gt; {activeTask.progress}
+                    </div>
+                    <div ref={logConsoleEndRef} />
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Job results details and filterable table */}
-          {selectedTask ? (
-            <section className="glass-panel">
-              <div className="card-header" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
-                <div>
-                  <h2 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <CheckCircle size={20} style={{ color: 'var(--success)' }} />
-                    Results: {selectedTask.job_title} in {selectedTask.country}
-                  </h2>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Fetched last {selectedTask.last_days} days. Database Log UUID: {selectedTask.id}
-                  </p>
-                </div>
-                
-                {/* Search Datatable input */}
-                {parsedJobs.length > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto', background: '#f8fafc', padding: '0.4rem 0.8rem', borderRadius: '4px', border: '1px solid var(--panel-border)' }}>
-                    <Filter size={16} style={{ color: 'var(--primary-hover)' }} />
+        {/* Error Alerts */}
+        {error && (
+          <div className="panel-card" style={{ borderColor: 'var(--danger)', background: 'rgba(239, 68, 68, 0.04)', padding: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+            <AlertCircle style={{ color: 'var(--danger)' }} size={18} />
+            <div>
+              <h3 style={{ fontSize: '0.85rem', color: 'var(--danger)' }}>AI Scan Interrupted</h3>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Job Results Board */}
+        {selectedTask ? (
+          <div className="panel-card" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+            <div className="card-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+                  Job Listings Found: {selectedTask.job_title} in {selectedTask.country}
+                </h2>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Scanned LinkedIn vacancies posted in the last {selectedTask.last_days} days.
+                </p>
+              </div>
+              
+              {/* Dynamic Table search */}
+              {parsedJobs.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
+                  <button 
+                    type="button" 
+                    onClick={downloadCSV}
+                    className="btn-apply"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', height: '1.9rem', fontSize: '0.78rem', background: 'var(--panel-bg)', cursor: 'pointer' }}
+                    title="Export matching jobs to CSV"
+                  >
+                    <Download size={12} />
+                    Save as Excel (CSV)
+                  </button>
+                  <div className="datatable-filter">
+                    <Filter size={12} style={{ color: 'var(--text-muted)' }} />
                     <input 
                       type="text" 
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Filter by keyword..."
-                      style={{ border: 'none', background: 'none', fontSize: '0.85rem', width: '180px', padding: 0 }}
+                      placeholder="Search results by keyword..."
+                      style={{ border: 'none', background: 'none', color: 'var(--text-main)', fontSize: '0.78rem', width: '160px', padding: 0, outline: 'none' }}
                     />
                   </div>
-                )}
-              </div>
-
-              <div className="card-body">
-                {selectedTask.status === 'FAILED' ? (
-                  <div style={{ padding: '2rem', textAlign: 'center' }}>
-                    <AlertCircle style={{ color: 'var(--danger)' }} size={36} />
-                    <h3 style={{ marginTop: '0.5rem', fontSize: '1rem' }}>Search Failed</h3>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedTask.error_message}</p>
-                  </div>
-                ) : parsedJobs.length === 0 ? (
-                  <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    No job data could be extracted. The search agent might have found 0 items matching the criteria or returned an irregular table format.
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                      <span>Showing {filteredJobs.length} of {parsedJobs.length} jobs retrieved</span>
-                      <span>Target: &gt;={selectedTask.limit_count} jobs requested</span>
-                    </div>
-                    
-                    {/* The Parsed Datatable */}
-                    <div className="table-container">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Job Title</th>
-                            <th>Company</th>
-                            <th>Location</th>
-                            <th>Estimated Salary</th>
-                            <th>Status Badge</th>
-                            <th>Application</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredJobs.map((job, idx) => (
-                            <tr key={idx}>
-                              <td style={{ fontWeight: 600 }}>{job.title}</td>
-                              <td>{job.company}</td>
-                              <td>{job.location}</td>
-                              <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
-                              <td>
-                                <span className="badge badge-relocation">
-                                  Visa Support
-                                </span>
-                              </td>
-                              <td>
-                                {job.link_url ? (
-                                  <a 
-                                    href={job.link_url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="btn-apply"
-                                  >
-                                    Apply
-                                    <ExternalLink size={12} />
-                                  </a>
-                                ) : (
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>N/A</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-          ) : (
-            <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '400px', textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-              <Briefcase size={48} style={{ color: 'var(--primary)', opacity: 0.15, marginBottom: '1rem' }} />
-              <h3>Select a Task or Run a New Scan</h3>
-              <p style={{ fontSize: '0.85rem', maxWidth: '380px', marginTop: '0.5rem' }}>
-                Launch a scan on the left pane to execute real-time scraping, or choose an item from the PostgreSQL history list to inspect results.
-              </p>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            <div className="card-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '1.25rem' }}>
+              {selectedTask.status === 'FAILED' ? (
+                <div style={{ padding: '3rem 1.5rem', textAlign: 'center' }}>
+                  <AlertCircle style={{ color: 'var(--danger)' }} size={32} />
+                  <h3 style={{ marginTop: '0.5rem', fontSize: '0.92rem' }}>AI Scan Stopped</h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>{selectedTask.error_message}</p>
+                </div>
+              ) : parsedJobs.length === 0 ? (
+                <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                  No job postings were returned by the AI. This may happen if zero vacancies matched the criteria or if Nginx parsing was interrupted.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    <span>Showing <strong>{filteredJobs.length}</strong> of <strong>{parsedJobs.length}</strong> visa relocation items resolved</span>
+                    <span>Requested maximum limit: {selectedTask.limit_count} listings</span>
+                  </div>
+                  
+                  {/* High-density zebra styled datatable */}
+                  <div className="table-container" style={{ flex: 1, overflowY: 'auto' }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Job Title</th>
+                          <th>Employer</th>
+                          <th>City / Country</th>
+                          <th>Salary Estimate</th>
+                          <th>Relocation Support</th>
+                          <th>Apply Link</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredJobs.map((job, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 600 }}>{job.title}</td>
+                            <td>{job.company}</td>
+                            <td>{job.location}</td>
+                            <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
+                            <td>
+                              <span className="badge badge-relocation">
+                                Visa Support
+                              </span>
+                            </td>
+                            <td>
+                              {job.link_url ? (
+                                <a 
+                                  href={job.link_url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="btn-apply"
+                                >
+                                  Apply
+                                  <ExternalLink size={10} />
+                                </a>
+                              ) : (
+                                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>N/A</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* WORKSPACE OVERVIEW (Approachable non-technical welcome dashboard) */
+          <div className="workspace-overview">
+            <div className="overview-grid">
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">Searches Performed</span>
+                <span className="overview-stat-value">{history.length}</span>
+              </div>
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">Completed Scans</span>
+                <span className="overview-stat-value">
+                  {history.filter(t => t.status === 'COMPLETED').length}
+                </span>
+              </div>
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">System Status</span>
+                <span className="overview-stat-value" style={{ color: health.gateway === 'online' ? 'var(--success)' : 'var(--danger)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.2rem' }}>
+                  <Activity size={16} />
+                  {health.gateway === 'online' ? 'OPERATIONAL' : 'OFFLINE'}
+                </span>
+              </div>
+            </div>
+
+            <div className="panel-card">
+              <div className="card-header">
+                <h3 style={{ fontSize: '0.92rem' }}>Welcome to your AI Career Relocation Assistant</h3>
+              </div>
+              <div className="card-body">
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-main)', marginBottom: '0.85rem', lineHeight: '1.6' }}>
+                  This assistant uses advanced artificial intelligence to index job vacancies, filtering out positions that do not officially support international relocation packages or visa sponsorships. It simplifies your search for work abroad by isolating verified postings instantly.
+                </p>
+                <h4 style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem', marginTop: '1.25rem' }}>
+                  How to get started:
+                </h4>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.5rem', lineHeight: '1.5' }}>
+                  <li><strong>1. Choose your Target Role and Country</strong>: In the <strong>Scan Options</strong> form on the left sidebar, enter the job title you want and select the destination country.</li>
+                  <li><strong>2. Start the AI Scan</strong>: Click the <strong>Scan Visa Jobs</strong> button. The AI will immediately connect and scan LinkedIn in real time. You can monitor its friendly progress steps above.</li>
+                  <li><strong>3. Explore and Save</strong>: View your results in the dashboard. You can search them dynamically by typing in the keyword box, or download them as an Excel-friendly CSV sheet using the <strong>Save as Excel (CSV)</strong> button.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
