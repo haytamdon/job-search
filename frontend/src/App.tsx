@@ -276,9 +276,9 @@ export default function App() {
   return (
     <div>
       {/* Navbar Header */}
-      <header className="glass-panel" style={{ margin: '1.5rem', padding: '1rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '14px' }}>
+      <header className="glass-panel" style={{ margin: '1.5rem', padding: '1rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '6px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ background: 'var(--primary)', padding: '0.5rem', borderRadius: '10px', boxShadow: '0 0 15px var(--primary-glow)', display: 'flex', alignItems: 'center' }}>
+          <div style={{ background: 'var(--primary)', padding: '0.5rem', borderRadius: '4px', display: 'flex', alignItems: 'center' }}>
             <Briefcase style={{ color: 'white' }} size={24} />
           </div>
           <div>
@@ -432,7 +432,7 @@ export default function App() {
                         cursor: isLoading ? 'not-allowed' : 'pointer', 
                         fontSize: '0.85rem',
                         borderColor: selectedTask?.id === task.id ? 'var(--primary)' : 'var(--panel-border)',
-                        background: selectedTask?.id === task.id ? 'rgba(139, 92, 246, 0.05)' : 'rgba(17, 24, 39, 0.4)'
+                        background: selectedTask?.id === task.id ? 'var(--primary-glow)' : '#ffffff'
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontWeight: 600 }}>
@@ -521,7 +521,7 @@ export default function App() {
                 
                 {/* Search Datatable input */}
                 {parsedJobs.length > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto', background: 'rgba(3, 7, 18, 0.4)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--panel-border)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto', background: '#f8fafc', padding: '0.4rem 0.8rem', borderRadius: '4px', border: '1px solid var(--panel-border)' }}>
                     <Filter size={16} style={{ color: 'var(--primary-hover)' }} />
                     <input 
                       type="text" 
@@ -603,7 +603,7 @@ export default function App() {
             </section>
           ) : (
             <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '400px', textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-              <Briefcase size={48} style={{ color: 'rgba(139, 92, 246, 0.2)', marginBottom: '1rem' }} />
+              <Briefcase size={48} style={{ color: 'var(--primary)', opacity: 0.15, marginBottom: '1rem' }} />
               <h3>Select a Task or Run a New Scan</h3>
               <p style={{ fontSize: '0.85rem', maxWidth: '380px', marginTop: '0.5rem' }}>
                 Launch a scan on the left pane to execute real-time scraping, or choose an item from the PostgreSQL history list to inspect results.
