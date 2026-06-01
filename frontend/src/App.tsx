@@ -13,7 +13,6 @@ import {
   AlertCircle, 
   CheckCircle, 
   Loader2, 
-  ChevronRight, 
   Filter, 
   RefreshCw 
 } from 'lucide-react';
@@ -79,7 +78,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   
   // Refs
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRef = useRef<any>(null);
   const logConsoleEndRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch task history
