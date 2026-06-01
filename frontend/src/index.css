@@ -467,7 +467,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* Data Table Grid */
 .table-container {
-  max-height: 520px;
+  max-height: 680px;
   overflow-y: auto;
   overflow-x: auto;
   border-radius: 6px;

@@ -34,6 +34,8 @@ export const bootstrapDatabase = async () => {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           completed_at TIMESTAMP
         );
+        ALTER TABLE search_tasks ADD COLUMN IF NOT EXISTS experience_years INT;
+        ALTER TABLE search_tasks ADD COLUMN IF NOT EXISTS workplace_type VARCHAR(50);
       `;
       
       await pool.query(initTableQuery);

@@ -37,6 +37,8 @@ class SearchRequest(BaseModel):
     job_title: str = Field(default="AI engineer", description="Job title to search.")
     limit: int = Field(default=150, description="Minimum number of jobs to request.")
     last_days: int = Field(default=30, description="Lookback window in days.")
+    experience_years: Optional[int] = Field(default=None, description="Preferred years of experience.")
+    workplace_type: Optional[str] = Field(default=None, description="Workplace type: remote, hybrid, on-site, or all.")
 
 class TaskResponse(BaseModel):
     task_id: str
@@ -68,6 +70,8 @@ async def run_search_logic(
     job_title: str, 
     limit: int, 
     last_days: int,
+    experience_years: Optional[int] = None,
+    workplace_type: Optional[str] = None,
     task_id: Optional[str] = None
 ) -> Dict[str, str]:
     """Execute the MCPAgent LinkedIn Job search logic."""
@@ -99,10 +103,17 @@ async def run_search_logic(
             f"Search Linkedin and any valid source and give me all of the {job_title} "
             f"jobs posted in {country} in the last {last_days} days (nothing before) that mention the possibility "
             f"of visa sponsorship and/or relocation support (A MUST).\n"
-            f"Give me the title, company, location, salary range, description, publishing date, and a link to the job.\n"
+        )
+        if experience_years is not None:
+            prompt += f"The jobs should target candidates with around {experience_years} years of experience.\n"
+        if workplace_type and workplace_type.lower() != 'all':
+            prompt += f"The job office presence must be {workplace_type.upper()}.\n"
+            
+        prompt += (
+            f"Give me the title, company, location, salary range, description summary (brief 1-sentence summary of the job/responsibilities), publishing date, and a link to the job.\n"
             f"All of the job should still be accepting applications.\n"
             f"Give me at least a {limit} jobs.\n"
-            f"Structure it as a table."
+            f"Structure it as a table with columns: Job Title, Company, Location, Salary Range, Description Summary, Relocation Details, Link.\n"
         )
         
         result = await agent.run(prompt, max_steps=1500)
@@ -128,7 +139,9 @@ async def background_search_task(
     country: str, 
     job_title: str, 
     limit: int, 
-    last_days: int
+    last_days: int,
+    experience_years: Optional[int] = None,
+    workplace_type: Optional[str] = None
 ):
     """Background task wrapping the search agent execution."""
     tasks_db[task_id]["status"] = "RUNNING"
@@ -138,6 +151,8 @@ async def background_search_task(
             job_title=job_title,
             limit=limit,
             last_days=last_days,
+            experience_years=experience_years,
+            workplace_type=workplace_type,
             task_id=task_id
         )
         tasks_db[task_id]["status"] = "COMPLETED"
@@ -173,6 +188,8 @@ async def trigger_async_search(request: SearchRequest, background_tasks: Backgro
         "job_title": request.job_title,
         "limit": request.limit,
         "last_days": request.last_days,
+        "experience_years": request.experience_years,
+        "workplace_type": request.workplace_type,
         "created_at": created_at,
         "completed_at": None,
         "results": {},
@@ -185,7 +202,9 @@ async def trigger_async_search(request: SearchRequest, background_tasks: Backgro
         country=request.country,
         job_title=request.job_title,
         limit=request.limit,
-        last_days=request.last_days
+        last_days=request.last_days,
+        experience_years=request.experience_years,
+        workplace_type=request.workplace_type
     )
     
     return TaskResponse(
@@ -214,7 +233,9 @@ async def trigger_sync_search(request: SearchRequest):
             country=request.country,
             job_title=request.job_title,
             limit=request.limit,
-            last_days=request.last_days
+            last_days=request.last_days,
+            experience_years=request.experience_years,
+            workplace_type=request.workplace_type
         )
         return {
             "status": "COMPLETED",
