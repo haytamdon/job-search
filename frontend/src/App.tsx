@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { 
-  Briefcase, 
-  Search, 
-  MapPin, 
-  Clock, 
-  Activity, 
-  ExternalLink, 
-  AlertCircle, 
-  CheckCircle, 
-  Loader2, 
+import {
+  Briefcase,
+  Search,
+  MapPin,
+  Clock,
+  Activity,
+  ExternalLink,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
   RefreshCw,
   Sun,
   Moon,
@@ -90,12 +90,12 @@ export default function App() {
   const [activeTask, setActiveTask] = useState<SelectedTaskDetail | null>(null);
   const [selectedTask, setSelectedTask] = useState<SelectedTaskDetail | null>(null);
   const [parsedJobs, setParsedJobs] = useState<ParsedJob[]>([]);
-  
+
   // Table search filters
   const [searchTerm, setSearchTerm] = useState('');
   const [resultsWorkplaceFilter, setResultsWorkplaceFilter] = useState('all');
   const [resultsMinSalaryFilter, setResultsMinSalaryFilter] = useState('');
-  
+
   // Health status
   const [health, setHealth] = useState({
     gateway: 'offline',
@@ -106,7 +106,7 @@ export default function App() {
   // UI States
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Refs
   const pollingRef = useRef<any>(null);
   const logConsoleEndRef = useRef<HTMLDivElement | null>(null);
@@ -177,7 +177,7 @@ export default function App() {
   const getActiveProgressStep = (progress: string, status: string): number => {
     if (status === 'COMPLETED') return 5;
     if (status === 'FAILED') return -1;
-    
+
     const lower = progress.toLowerCase();
     if (lower.includes('saving') || lower.includes('database') || lower.includes('postgres') || lower.includes('done')) return 4;
     if (lower.includes('evaluat') || lower.includes('structur') || lower.includes('pars') || lower.includes('markdown') || lower.includes('table')) return 3;
@@ -210,14 +210,14 @@ export default function App() {
     try {
       const lines = markdown.trim().split('\n');
       let tableStartIndex = -1;
-      
+
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes('|') && lines[i].includes('-') && i > 0) {
           tableStartIndex = i - 1;
           break;
         }
       }
-      
+
       if (tableStartIndex === -1) return [];
 
       const headers = lines[tableStartIndex]
@@ -241,7 +241,7 @@ export default function App() {
           // Normalize header key
           const key = header.toLowerCase().replace(/[\s_]+/g, '');
           let val = cells[index] || '';
-          
+
           // Parse links in markdown [Text](URL)
           if (val.startsWith('[') && val.includes('](')) {
             const urlMatch = val.match(/\]\((.*?)\)/);
@@ -294,12 +294,12 @@ export default function App() {
     const currentId = activeTaskIdRef.current;
     if (!currentId) return;
     const task = await selectTaskDetail(currentId, false);
-    
+
     // Discard if the active task ID changed or was cleared while this request was in flight!
     if (activeTaskIdRef.current !== currentId) {
       return;
     }
-    
+
     if (!task) return;
 
     if (task.status === 'COMPLETED' || task.status === 'FAILED') {
@@ -358,7 +358,7 @@ export default function App() {
         experience_years: experienceYears !== '' ? Number(experienceYears) : null,
         workplace_type: workplaceType
       });
-      
+
       const newTaskId = response.data.task_id;
       changeActiveTaskId(newTaskId);
       fetchHistory();
@@ -398,7 +398,7 @@ export default function App() {
       const salaryText = (job.salaryrange || '').toLowerCase();
       const filterNumStr = resultsMinSalaryFilter.replace(/[^0-9]/g, '');
       const filterVal = filterNumStr ? parseInt(filterNumStr, 10) : 0;
-      
+
       if (filterVal > 0) {
         // Try to extract numbers from salaryText
         const salaryNums = salaryText.replace(/,/g, '').match(/\d+/g);
@@ -430,8 +430,8 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement;
       const isInput = activeEl && (
-        activeEl.tagName === 'INPUT' || 
-        activeEl.tagName === 'SELECT' || 
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'SELECT' ||
         activeEl.tagName === 'TEXTAREA'
       );
 
@@ -477,8 +477,8 @@ export default function App() {
               <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Multi-Microservices AI Engine</p>
             </div>
           </div>
-          <button 
-            type="button" 
+          <button
+            type="button"
             className="theme-toggle-btn"
             onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
             title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
@@ -528,11 +528,11 @@ export default function App() {
           <form onSubmit={triggerSearch}>
             <div className="form-group">
               <label>Target Job Title</label>
-              <input 
-                type="text" 
-                value={jobTitle} 
-                onChange={(e) => setJobTitle(e.target.value)} 
-                required 
+              <input
+                type="text"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                required
                 disabled={isLoading}
                 placeholder="e.g. AI engineer"
               />
@@ -540,36 +540,42 @@ export default function App() {
 
             <div className="form-group">
               <label>Destination Country</label>
-              <select 
-                value={country} 
-                onChange={(e) => setCountry(e.target.value)} 
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
                 disabled={isLoading}
-                style={{ 
-                  width: '100%', 
-                  background: 'var(--bg-color)', 
-                  color: 'var(--text-main)', 
-                  border: '1px solid var(--panel-border)', 
-                  borderRadius: '6px', 
-                  padding: '0.45rem 0.5rem', 
-                  fontSize: '0.82rem', 
+                style={{
+                  width: '100%',
+                  background: 'var(--bg-color)',
+                  color: 'var(--text-main)',
+                  border: '1px solid var(--panel-border)',
+                  borderRadius: '6px',
+                  padding: '0.45rem 0.5rem',
+                  fontSize: '0.82rem',
                   outline: 'none',
                   height: '2rem',
                   cursor: 'pointer'
                 }}
               >
-                <option value="Germany">Germany</option>
-                <option value="Netherlands">Netherlands</option>
-                <option value="Sweden">Sweden</option>
-                <option value="United Kingdom">United Kingdom</option>
-                <option value="Ireland">Ireland</option>
-                <option value="Switzerland">Switzerland</option>
-                <option value="France">France</option>
-                <option value="Canada">Canada</option>
-                <option value="United States">United States</option>
-                <option value="United Arab Emirates">United Arab Emirates</option>
-                <option value="Singapore">Singapore</option>
-                <option value="Japan">Japan</option>
                 <option value="Australia">Australia</option>
+                <option value="Bahrain">Bahrain</option>
+                <option value="Canada">Canada</option>
+                <option value="France">France</option>
+                <option value="Germany">Germany</option>
+                <option value="Ireland">Ireland</option>
+                <option value="Japan">Japan</option>
+                <option value="Kuwait">Kuwait</option>
+                <option value="Netherlands">Netherlands</option>
+                <option value="New Zealand">New Zealand</option>
+                <option value="Oman">Oman</option>
+                <option value="Qatar">Qatar</option>
+                <option value="Saudi Arabia">Saudi Arabia</option>
+                <option value="Singapore">Singapore</option>
+                <option value="Sweden">Sweden</option>
+                <option value="Switzerland">Switzerland</option>
+                <option value="United Arab Emirates">United Arab Emirates</option>
+                <option value="United Kingdom">United Kingdom</option>
+                <option value="United States">United States</option>
               </select>
             </div>
 
@@ -578,13 +584,13 @@ export default function App() {
                 <label>Max Jobs to Scan</label>
                 <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>{limit} listings</span>
               </div>
-              <input 
-                type="range" 
-                min="10" 
-                max="300" 
+              <input
+                type="range"
+                min="10"
+                max="300"
                 step="10"
-                value={limit} 
-                onChange={(e) => setLimit(parseInt(e.target.value))} 
+                value={limit}
+                onChange={(e) => setLimit(parseInt(e.target.value))}
                 disabled={isLoading}
                 style={{ width: '100%' }}
                 aria-label="Max Jobs Slider"
@@ -599,13 +605,13 @@ export default function App() {
                 <label>Scraping Timeframe</label>
                 <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>Last {lastDays} days</span>
               </div>
-              <input 
-                type="range" 
-                min="5" 
-                max="60" 
+              <input
+                type="range"
+                min="5"
+                max="60"
                 step="5"
-                value={lastDays} 
-                onChange={(e) => setLastDays(parseInt(e.target.value))} 
+                value={lastDays}
+                onChange={(e) => setLastDays(parseInt(e.target.value))}
                 disabled={isLoading}
                 style={{ width: '100%' }}
                 aria-label="Timeframe Slider"
@@ -618,12 +624,12 @@ export default function App() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label>Experience Years</label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   min="0"
                   max="25"
-                  value={experienceYears} 
-                  onChange={(e) => setExperienceYears(e.target.value === '' ? '' : parseInt(e.target.value))} 
+                  value={experienceYears}
+                  onChange={(e) => setExperienceYears(e.target.value === '' ? '' : parseInt(e.target.value))}
                   disabled={isLoading}
                   placeholder="Any"
                   style={{ width: '100%' }}
@@ -632,18 +638,18 @@ export default function App() {
 
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label>Office Setup</label>
-                <select 
-                  value={workplaceType} 
-                  onChange={(e) => setWorkplaceType(e.target.value)} 
+                <select
+                  value={workplaceType}
+                  onChange={(e) => setWorkplaceType(e.target.value)}
                   disabled={isLoading}
-                  style={{ 
-                    width: '100%', 
-                    background: 'var(--bg-color)', 
-                    color: 'var(--text-main)', 
-                    border: '1px solid var(--panel-border)', 
-                    borderRadius: '6px', 
-                    padding: '0.45rem 0.5rem', 
-                    fontSize: '0.82rem', 
+                  style={{
+                    width: '100%',
+                    background: 'var(--bg-color)',
+                    color: 'var(--text-main)',
+                    border: '1px solid var(--panel-border)',
+                    borderRadius: '6px',
+                    padding: '0.45rem 0.5rem',
+                    fontSize: '0.82rem',
                     outline: 'none',
                     height: '2rem'
                   }}
@@ -656,9 +662,9 @@ export default function App() {
               </div>
             </div>
 
-            <button 
-              type="submit" 
-              className="btn-glow" 
+            <button
+              type="submit"
+              className="btn-glow"
               style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
               disabled={isLoading || health.gateway === 'offline'}
             >
@@ -681,15 +687,15 @@ export default function App() {
         <div className="sidebar-section" style={{ borderBottom: 'none', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '220px' }}>
           <div className="sidebar-section-title">
             <span>Search History</span>
-            <button 
-              onClick={fetchHistory} 
+            <button
+              onClick={fetchHistory}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
               title="Refresh History"
             >
               <RefreshCw size={11} />
             </button>
           </div>
-          
+
           <div className="history-feed" style={{ flex: 1 }}>
             {history.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '1.5rem 0', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
@@ -697,8 +703,8 @@ export default function App() {
               </div>
             ) : (
               history.map((task) => (
-                <div 
-                  key={task.id} 
+                <div
+                  key={task.id}
                   onClick={() => !isLoading && selectTaskDetail(task.id)}
                   className={`history-item ${selectedTask?.id === task.id ? 'selected' : ''}`}
                   style={{ cursor: isLoading ? 'not-allowed' : 'pointer', marginBottom: '0.5rem' }}
@@ -711,8 +717,8 @@ export default function App() {
                       <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
                         {task.status}
                       </span>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={(e) => deleteTaskDetail(e, task.id)}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.1rem', display: 'flex', color: 'var(--text-muted)' }}
                         title="Remove search history"
@@ -749,19 +755,19 @@ export default function App() {
             </div>
             <div>
               <h2 style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                {selectedTask 
-                  ? `Scanned Jobs: ${selectedTask.job_title} in ${selectedTask.country}` 
-                  : activeTask 
-                    ? `Workspace: AI Search Assistant Active` 
+                {selectedTask
+                  ? `Scanned Jobs: ${selectedTask.job_title} in ${selectedTask.country}`
+                  : activeTask
+                    ? `Workspace: AI Search Assistant Active`
                     : 'Search Dashboard'}
               </h2>
             </div>
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500, fontFamily: 'monospace' }}>
-            {selectedTask 
-              ? `ID: ${selectedTask.id.substring(0, 8)}...` 
-              : activeTask 
-                ? 'AI SEARCH RUNNING' 
+            {selectedTask
+              ? `ID: ${selectedTask.id.substring(0, 8)}...`
+              : activeTask
+                ? 'AI SEARCH RUNNING'
                 : 'STORAGE STATUS: ACTIVE'}
           </div>
         </div>
@@ -795,7 +801,7 @@ export default function App() {
                   const currentStep = getActiveProgressStep(activeTask.progress, activeTask.status);
                   const isDone = currentStep > item.step;
                   const isActive = currentStep === item.step;
-                  
+
                   return (
                     <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.82rem' }}>
                       <div style={{
@@ -837,7 +843,7 @@ export default function App() {
                 >
                   {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
                 </button>
-                
+
                 {showRawLogs && (
                   <div className="progress-console" style={{ marginTop: '0.75rem' }}>
                     <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
@@ -881,12 +887,12 @@ export default function App() {
                   Scanned LinkedIn vacancies posted in the last {selectedTask.last_days} days.
                 </p>
               </div>
-              
+
               {/* Dynamic Table search & multi-criteria filters */}
               {parsedJobs.length > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginLeft: 'auto', flexWrap: 'wrap' }}>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={downloadCSV}
                     className="btn-apply"
                     style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', height: '2.1rem', fontSize: '0.78rem', background: 'var(--panel-bg)', cursor: 'pointer', padding: '0 0.75rem' }}
@@ -895,12 +901,12 @@ export default function App() {
                     <Download size={12} />
                     Save as Excel (CSV)
                   </button>
-                  
+
                   {/* Keyword search input (enlarged) */}
                   <div className="datatable-filter" style={{ minWidth: '240px', height: '2.1rem', padding: '0 0.75rem' }}>
                     <Search size={12} style={{ color: 'var(--text-muted)' }} />
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                       placeholder="Search title, company, skills..."
@@ -958,7 +964,7 @@ export default function App() {
                     <span>Showing <strong>{filteredJobs.length}</strong> of <strong>{parsedJobs.length}</strong> visa relocation items resolved</span>
                     <span>Requested maximum limit: {selectedTask.limit_count} listings</span>
                   </div>
-                  
+
                   {/* High-density zebra styled datatable */}
                   <div className="table-container">
                     <table>
@@ -981,9 +987,9 @@ export default function App() {
                             <td>{job.location}</td>
                             <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
                             <td>
-                              <div style={{ 
-                                maxWidth: '240px', 
-                                fontSize: '0.78rem', 
+                              <div style={{
+                                maxWidth: '240px',
+                                fontSize: '0.78rem',
                                 color: 'var(--text-muted)',
                                 display: '-webkit-box',
                                 WebkitLineClamp: 2,
@@ -1003,10 +1009,10 @@ export default function App() {
                             </td>
                             <td>
                               {job.link_url ? (
-                                <a 
-                                  href={job.link_url} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
+                                <a
+                                  href={job.link_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   className="btn-apply"
                                 >
                                   Apply
