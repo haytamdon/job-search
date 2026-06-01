@@ -81,6 +81,11 @@ export default function App() {
   // App states
   const [history, setHistory] = useState<TaskHistory[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
+  const changeActiveTaskId = (id: string | null) => {
+    activeTaskIdRef.current = id;
+    setActiveTaskId(id);
+  };
   const [activeTask, setActiveTask] = useState<SelectedTaskDetail | null>(null);
   const [selectedTask, setSelectedTask] = useState<SelectedTaskDetail | null>(null);
   const [parsedJobs, setParsedJobs] = useState<ParsedJob[]>([]);
@@ -283,20 +288,29 @@ export default function App() {
 
   // Poll active task status
   const pollTaskStatus = useCallback(async () => {
-    if (!activeTaskId) return;
-    const task = await selectTaskDetail(activeTaskId, false);
+    const currentId = activeTaskIdRef.current;
+    if (!currentId) return;
+    const task = await selectTaskDetail(currentId, false);
+    
+    // Discard if the active task ID changed or was cleared while this request was in flight!
+    if (activeTaskIdRef.current !== currentId) {
+      return;
+    }
+    
     if (!task) return;
 
-    setActiveTask(task);
     if (task.status === 'COMPLETED' || task.status === 'FAILED') {
-      setActiveTaskId(null);
+      changeActiveTaskId(null);
+      setActiveTask(null); // Clear active task so the monitor panel collapses upon completion
       setSelectedTask(task);
       setParsedJobs(parseJobsMarkdown(task.result_markdown));
       setIsLoading(false);
       fetchHistory();
       if (pollingRef.current) clearInterval(pollingRef.current);
+    } else {
+      setActiveTask(task);
     }
-  }, [activeTaskId]);
+  }, []);
 
   // Set up polling interval
   useEffect(() => {
@@ -341,7 +355,7 @@ export default function App() {
       });
       
       const newTaskId = response.data.task_id;
-      setActiveTaskId(newTaskId);
+      changeActiveTaskId(newTaskId);
       fetchHistory();
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'Failed to initialize search agent.');
@@ -535,7 +549,7 @@ export default function App() {
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="pulse-active" size={16} />
+                  <Loader2 className="animate-spin" size={16} style={{ display: 'inline-block', transformOrigin: 'center' }} />
                   Scanning Market...
                 </>
               ) : (
@@ -642,11 +656,11 @@ export default function App() {
           <div className="panel-card" style={{ borderColor: 'var(--primary)', marginBottom: '1.5rem' }}>
             <div className="card-header">
               <h2 style={{ fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Loader2 className="pulse-active" size={16} style={{ color: 'var(--primary)' }} />
+                <Loader2 className="animate-spin" size={16} style={{ color: 'var(--primary)', display: 'inline-block', transformOrigin: 'center' }} />
                 AI Assistant is Scanning the Job Market
               </h2>
-              <span className="badge badge-status badge-status-running">
-                Running
+              <span className={`badge badge-status badge-status-${activeTask.status.toLowerCase()}`}>
+                {activeTask.status === 'RUNNING' ? 'Running' : activeTask.status === 'PENDING' ? 'Pending' : activeTask.status}
               </span>
             </div>
             <div className="card-body">

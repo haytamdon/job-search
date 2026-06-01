@@ -604,3 +604,15 @@ input[type="range"]:focus::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
+/* Spinning Animations */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+  transform-origin: center;
+}
+
+
