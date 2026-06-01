@@ -16,3 +16,8 @@ wheels/
 outputs
 jobs
 jobs1
+
+# Agents files
+.agents
+.impeccable
+skills-lock.json
