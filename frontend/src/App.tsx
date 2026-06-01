@@ -540,14 +540,37 @@ export default function App() {
 
             <div className="form-group">
               <label>Destination Country</label>
-              <input 
-                type="text" 
+              <select 
                 value={country} 
                 onChange={(e) => setCountry(e.target.value)} 
-                required 
                 disabled={isLoading}
-                placeholder="e.g. Germany"
-              />
+                style={{ 
+                  width: '100%', 
+                  background: 'var(--bg-color)', 
+                  color: 'var(--text-main)', 
+                  border: '1px solid var(--panel-border)', 
+                  borderRadius: '6px', 
+                  padding: '0.45rem 0.5rem', 
+                  fontSize: '0.82rem', 
+                  outline: 'none',
+                  height: '2rem',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="Germany">Germany</option>
+                <option value="Netherlands">Netherlands</option>
+                <option value="Sweden">Sweden</option>
+                <option value="United Kingdom">United Kingdom</option>
+                <option value="Ireland">Ireland</option>
+                <option value="Switzerland">Switzerland</option>
+                <option value="France">France</option>
+                <option value="Canada">Canada</option>
+                <option value="United States">United States</option>
+                <option value="United Arab Emirates">United Arab Emirates</option>
+                <option value="Singapore">Singapore</option>
+                <option value="Japan">Japan</option>
+                <option value="Australia">Australia</option>
+              </select>
             </div>
 
             <div className="form-group">
