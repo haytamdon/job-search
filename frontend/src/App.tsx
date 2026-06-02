@@ -30,6 +30,8 @@ interface TaskHistory {
   error_message: string | null;
   created_at: string;
   completed_at: string | null;
+  experience_years?: number | null;
+  workplace_type?: string | null;
 }
 
 interface SelectedTaskDetail extends TaskHistory {
@@ -81,15 +83,19 @@ export default function App() {
 
   // App states
   const [history, setHistory] = useState<TaskHistory[]>([]);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const activeTaskIdRef = useRef<string | null>(null);
-  const changeActiveTaskId = (id: string | null) => {
-    activeTaskIdRef.current = id;
-    setActiveTaskId(id);
+  
+  // Multi-scan state managers
+  const [activeTaskIds, setActiveTaskIds] = useState<string[]>([]);
+  const activeTaskIdsRef = useRef<string[]>([]);
+  const changeActiveTaskIds = (ids: string[]) => {
+    activeTaskIdsRef.current = ids;
+    setActiveTaskIds(ids);
   };
-  const [activeTask, setActiveTask] = useState<SelectedTaskDetail | null>(null);
+  const [activeTasks, setActiveTasks] = useState<Record<string, SelectedTaskDetail>>({});
+  
   const [selectedTask, setSelectedTask] = useState<SelectedTaskDetail | null>(null);
   const [parsedJobs, setParsedJobs] = useState<ParsedJob[]>([]);
+  const [currentView, setCurrentView] = useState<'overview' | 'active-scans' | 'results'>('overview');
 
   // Table search filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -104,8 +110,17 @@ export default function App() {
   });
 
   // UI States
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A simple tick to force time-based progress bar updates every second
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick(t => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Refs
   const pollingRef = useRef<any>(null);
@@ -134,6 +149,27 @@ export default function App() {
       fetchHistory();
     } catch (err) {
       console.error('Error deleting task:', err);
+    }
+  };
+
+  // Cancel active scan and delete from database
+  const cancelActiveScan = async (id: string) => {
+    if (!window.confirm('Are you sure you want to cancel and delete this running scan?')) return;
+    try {
+      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
+      
+      const nextActiveIds = activeTaskIdsRef.current.filter(activeId => activeId !== id);
+      changeActiveTaskIds(nextActiveIds);
+      
+      setActiveTasks(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      
+      fetchHistory();
+    } catch (err) {
+      console.error(`Failed to cancel running scan ${id}:`, err);
     }
   };
 
@@ -173,17 +209,31 @@ export default function App() {
     }
   };
 
-  // Helper to map log progress to step indices (0-4)
-  const getActiveProgressStep = (progress: string, status: string): number => {
+  // Helper to map log progress to step indices (0-4) with time-based progression
+  const getActiveProgressStep = (createdAt: string, progress: string, status: string): number => {
     if (status === 'COMPLETED') return 5;
     if (status === 'FAILED') return -1;
 
-    const lower = progress.toLowerCase();
-    if (lower.includes('saving') || lower.includes('database') || lower.includes('postgres') || lower.includes('done')) return 4;
-    if (lower.includes('evaluat') || lower.includes('structur') || lower.includes('pars') || lower.includes('markdown') || lower.includes('table')) return 3;
-    if (lower.includes('routing') || lower.includes('scraping') || lower.includes('linkedin') || lower.includes('scan') || lower.includes('agent')) return 2;
-    if (lower.includes('spawning') || lower.includes('langchain') || lower.includes('openrouter') || lower.includes('client')) return 1;
-    return 0;
+    const elapsedMs = Date.now() - new Date(createdAt).getTime();
+    const elapsedSec = Math.max(0, elapsedMs / 1000);
+
+    // Time-based steps
+    let timeStep = 0;
+    if (elapsedSec > 90) timeStep = 4;
+    else if (elapsedSec > 60) timeStep = 3;
+    else if (elapsedSec > 25) timeStep = 2;
+    else if (elapsedSec > 8) timeStep = 1;
+
+    // Content-based steps
+    const lower = (progress || '').toLowerCase();
+    let contentStep = 0;
+    if (lower.includes('saving') || lower.includes('database') || lower.includes('postgres') || lower.includes('done')) contentStep = 4;
+    else if (lower.includes('evaluat') || lower.includes('structur') || lower.includes('pars') || lower.includes('markdown') || lower.includes('table')) contentStep = 3;
+    else if (lower.includes('routing') || lower.includes('scraping') || lower.includes('linkedin') || lower.includes('scan') || lower.includes('agent')) contentStep = 2;
+    else if (lower.includes('spawning') || lower.includes('langchain') || lower.includes('openrouter') || lower.includes('client')) contentStep = 1;
+
+    // Combine both: take the maximum step to ensure progressive flow
+    return Math.max(timeStep, contentStep);
   };
 
   // Fetch health check
@@ -281,6 +331,7 @@ export default function App() {
       if (select) {
         setSelectedTask(taskDetail);
         setParsedJobs(parseJobsMarkdown(taskDetail.result_markdown));
+        setCurrentView('results'); // Switch view when selecting a task from history
       }
       return taskDetail;
     } catch (err) {
@@ -289,41 +340,77 @@ export default function App() {
     }
   };
 
-  // Poll active task status
+  // Poll active task status for all active scans concurrently
   const pollTaskStatus = useCallback(async () => {
-    const currentId = activeTaskIdRef.current;
-    if (!currentId) return;
-    const task = await selectTaskDetail(currentId, false);
+    const currentIds = activeTaskIdsRef.current;
+    if (currentIds.length === 0) return;
 
-    // Discard if the active task ID changed or was cleared while this request was in flight!
-    if (activeTaskIdRef.current !== currentId) {
-      return;
+    try {
+      const results = await Promise.all(
+        currentIds.map(async (id) => {
+          try {
+            const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
+            return { id, task: response.data };
+          } catch (err) {
+            console.error(`Error polling task ${id}:`, err);
+            return { id, task: null };
+          }
+        })
+      );
+
+      // Discard if activeTaskIds changed while requests were in flight
+      if (activeTaskIdsRef.current !== currentIds) {
+        return;
+      }
+
+      const nextActiveTasks = { ...activeTasks };
+      const completedIds: string[] = [];
+      let finishedTaskToSelect: SelectedTaskDetail | null = null;
+
+      results.forEach(({ id, task }) => {
+        if (!task) return;
+
+        if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+          completedIds.push(id);
+          delete nextActiveTasks[id];
+          if (task.status === 'COMPLETED') {
+            finishedTaskToSelect = task;
+          }
+        } else {
+          nextActiveTasks[id] = task;
+        }
+      });
+
+      // Update state for active tasks
+      setActiveTasks(nextActiveTasks);
+
+      if (completedIds.length > 0) {
+        const nextActiveIds = currentIds.filter(id => !completedIds.includes(id));
+        changeActiveTaskIds(nextActiveIds);
+        fetchHistory();
+
+        // If an active task finished successfully, select it and show its results
+        if (finishedTaskToSelect) {
+          const task = finishedTaskToSelect as SelectedTaskDetail;
+          setSelectedTask(task);
+          setParsedJobs(parseJobsMarkdown(task.result_markdown));
+          setCurrentView('results');
+        }
+      }
+    } catch (err) {
+      console.error('Error in batch polling status:', err);
     }
-
-    if (!task) return;
-
-    if (task.status === 'COMPLETED' || task.status === 'FAILED') {
-      changeActiveTaskId(null);
-      setActiveTask(null); // Clear active task so the monitor panel collapses upon completion
-      setSelectedTask(task);
-      setParsedJobs(parseJobsMarkdown(task.result_markdown));
-      setIsLoading(false);
-      fetchHistory();
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    } else {
-      setActiveTask(task);
-    }
-  }, []);
+  }, [activeTasks]);
 
   // Set up polling interval
   useEffect(() => {
-    if (activeTaskId) {
+    if (activeTaskIds.length > 0) {
       pollingRef.current = setInterval(pollTaskStatus, 3000);
     }
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [activeTaskId, pollTaskStatus]);
+  }, [activeTaskIds.length, pollTaskStatus]);
 
   // Initial loads
   useEffect(() => {
@@ -338,16 +425,13 @@ export default function App() {
     if (logConsoleEndRef.current) {
       logConsoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeTask?.progress, showRawLogs]);
+  }, [activeTasks, showRawLogs, tick]);
 
   // Trigger search trigger
   const triggerSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    setIsSubmitting(true);
     setError(null);
-    setSelectedTask(null);
-    setParsedJobs([]);
-    setActiveTask(null);
 
     try {
       const response = await axios.post(`${API_BASE}/api/jobs/search`, {
@@ -360,11 +444,33 @@ export default function App() {
       });
 
       const newTaskId = response.data.task_id;
-      changeActiveTaskId(newTaskId);
+      
+      const updatedActiveIds = [...activeTaskIdsRef.current, newTaskId];
+      changeActiveTaskIds(updatedActiveIds);
+      
+      setActiveTasks(prev => ({
+        ...prev,
+        [newTaskId]: {
+          id: newTaskId,
+          country,
+          job_title: jobTitle,
+          limit_count: limit,
+          last_days: lastDays,
+          status: 'PENDING',
+          progress: 'Task queued...',
+          error_message: null,
+          created_at: new Date().toISOString(),
+          completed_at: null,
+          result_markdown: null
+        }
+      }));
+
+      setCurrentView('active-scans');
       fetchHistory();
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || 'Failed to initialize search agent.');
-      setIsLoading(false);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -533,7 +639,7 @@ export default function App() {
                 value={jobTitle}
                 onChange={(e) => setJobTitle(e.target.value)}
                 required
-                disabled={isLoading}
+                disabled={isSubmitting}
                 placeholder="e.g. AI engineer"
               />
             </div>
@@ -543,7 +649,7 @@ export default function App() {
               <select
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
-                disabled={isLoading}
+                disabled={isSubmitting}
                 style={{
                   width: '100%',
                   background: 'var(--bg-color)',
@@ -613,7 +719,7 @@ export default function App() {
                 step="10"
                 value={limit}
                 onChange={(e) => setLimit(parseInt(e.target.value))}
-                disabled={isLoading}
+                disabled={isSubmitting}
                 style={{ width: '100%' }}
                 aria-label="Max Jobs Slider"
                 aria-valuemin={10}
@@ -634,7 +740,7 @@ export default function App() {
                 step="5"
                 value={lastDays}
                 onChange={(e) => setLastDays(parseInt(e.target.value))}
-                disabled={isLoading}
+                disabled={isSubmitting}
                 style={{ width: '100%' }}
                 aria-label="Timeframe Slider"
                 aria-valuemin={5}
@@ -652,7 +758,7 @@ export default function App() {
                   max="25"
                   value={experienceYears}
                   onChange={(e) => setExperienceYears(e.target.value === '' ? '' : parseInt(e.target.value))}
-                  disabled={isLoading}
+                  disabled={isSubmitting}
                   placeholder="Any"
                   style={{ width: '100%' }}
                 />
@@ -663,7 +769,7 @@ export default function App() {
                 <select
                   value={workplaceType}
                   onChange={(e) => setWorkplaceType(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isSubmitting}
                   style={{
                     width: '100%',
                     background: 'var(--bg-color)',
@@ -688,9 +794,9 @@ export default function App() {
               type="submit"
               className="btn-glow"
               style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
-              disabled={isLoading || health.gateway === 'offline'}
+              disabled={isSubmitting || health.gateway === 'offline'}
             >
-              {isLoading ? (
+              {isSubmitting ? (
                 <>
                   <Loader2 className="animate-spin" size={16} style={{ display: 'inline-block', transformOrigin: 'center' }} />
                   Scanning Market...
@@ -727,9 +833,9 @@ export default function App() {
               history.map((task) => (
                 <div
                   key={task.id}
-                  onClick={() => !isLoading && selectTaskDetail(task.id)}
+                  onClick={() => selectTaskDetail(task.id)}
                   className={`history-item ${selectedTask?.id === task.id ? 'selected' : ''}`}
-                  style={{ cursor: isLoading ? 'not-allowed' : 'pointer', marginBottom: '0.5rem' }}
+                  style={{ cursor: 'pointer', marginBottom: '0.5rem' }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem', fontWeight: 600, alignItems: 'center' }}>
                     <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
@@ -777,113 +883,118 @@ export default function App() {
             </div>
             <div>
               <h2 style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                {selectedTask
-                  ? `Scanned Jobs: ${selectedTask.job_title} in ${selectedTask.country}`
-                  : activeTask
-                    ? `Workspace: AI Search Assistant Active`
-                    : 'Search Dashboard'}
+                {currentView === 'overview'
+                  ? 'Search Dashboard'
+                  : currentView === 'active-scans'
+                    ? 'Workspace: AI Search Assistant Active'
+                    : `Scanned Jobs: ${selectedTask?.job_title} in ${selectedTask?.country}`}
               </h2>
             </div>
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500, fontFamily: 'monospace' }}>
-            {selectedTask
+            {currentView === 'results' && selectedTask
               ? `ID: ${selectedTask.id.substring(0, 8)}...`
-              : activeTask
+              : currentView === 'active-scans' && activeTaskIds.length > 0
                 ? 'AI SEARCH RUNNING'
                 : 'STORAGE STATUS: ACTIVE'}
           </div>
         </div>
 
-        {/* Active Search Monitor with friendly visual progress bar checklist */}
-        {activeTask && (
-          <div className="panel-card" style={{ borderColor: 'var(--primary)', marginBottom: '1.5rem' }}>
-            <div className="card-header">
-              <h2 style={{ fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Loader2 className="animate-spin" size={16} style={{ color: 'var(--primary)', display: 'inline-block', transformOrigin: 'center' }} />
-                AI Assistant is Scanning the Job Market
-              </h2>
-              <span className={`badge badge-status badge-status-${activeTask.status.toLowerCase()}`}>
-                {activeTask.status === 'RUNNING' ? 'Running' : activeTask.status === 'PENDING' ? 'Pending' : activeTask.status}
+        {/* Subheader view navigation tabs */}
+        <div className="workspace-tabs" style={{
+          display: 'flex',
+          borderBottom: '1px solid var(--panel-border)',
+          padding: '0 0.5rem',
+          background: 'none',
+          gap: '1.5rem',
+          marginBottom: '1.5rem'
+        }}>
+          <button
+            type="button"
+            className={`workspace-tab ${currentView === 'overview' ? 'active' : ''}`}
+            onClick={() => setCurrentView('overview')}
+            style={{
+              padding: '0.65rem 0',
+              borderBottom: `2px solid ${currentView === 'overview' ? 'var(--primary)' : 'transparent'}`,
+              color: currentView === 'overview' ? 'var(--text-main)' : 'var(--text-muted)',
+              fontWeight: currentView === 'overview' ? 600 : 500,
+              background: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              borderTop: 'none',
+              fontSize: '0.82rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              outline: 'none'
+            }}
+          >
+            Overview & Guide
+          </button>
+          <button
+            type="button"
+            className={`workspace-tab ${currentView === 'active-scans' ? 'active' : ''}`}
+            onClick={() => setCurrentView('active-scans')}
+            style={{
+              padding: '0.65rem 0',
+              borderBottom: `2px solid ${currentView === 'active-scans' ? 'var(--primary)' : 'transparent'}`,
+              color: currentView === 'active-scans' ? 'var(--text-main)' : 'var(--text-muted)',
+              fontWeight: currentView === 'active-scans' ? 600 : 500,
+              background: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              borderTop: 'none',
+              fontSize: '0.82rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              outline: 'none'
+            }}
+          >
+            Active Scans
+            {activeTaskIds.length > 0 && (
+              <span style={{
+                background: 'var(--primary-glow)',
+                color: 'var(--primary)',
+                fontSize: '0.68rem',
+                padding: '0.1rem 0.4rem',
+                borderRadius: '10px',
+                fontWeight: 700,
+                border: '1px solid rgba(79, 70, 229, 0.15)'
+              }}>
+                {activeTaskIds.length}
               </span>
-            </div>
-            <div className="card-body">
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-                The AI is looking for up to {activeTask.limit_count} job postings posted on LinkedIn within the last {activeTask.last_days} days.
-              </p>
-
-              {/* Graphical Step Checklist for easy non-tech understanding */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                {[
-                  { label: 'Connecting to the AI service engine', step: 0 },
-                  { label: 'Initializing the LinkedIn scraper agent', step: 1 },
-                  { label: 'Scanning LinkedIn for visa-friendly job leads', step: 2 },
-                  { label: 'Evaluating relocation & sponsorship details', step: 3 },
-                  { label: 'Saving search results safely to your storage', step: 4 }
-                ].map((item, idx) => {
-                  const currentStep = getActiveProgressStep(activeTask.progress, activeTask.status);
-                  const isDone = currentStep > item.step;
-                  const isActive = currentStep === item.step;
-
-                  return (
-                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.82rem' }}>
-                      <div style={{
-                        width: '16px',
-                        height: '16px',
-                        borderRadius: '50%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.65rem',
-                        fontWeight: 700,
-                        background: isDone ? 'var(--success-glow)' : isActive ? 'var(--primary-glow)' : 'var(--bg-color)',
-                        color: isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--text-muted)',
-                        border: `1px solid ${isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--panel-border)'}`,
-                        transition: 'all 0.3s ease'
-                      }}>
-                        {isDone ? '✓' : idx + 1}
-                      </div>
-                      <span style={{
-                        fontWeight: isActive ? 600 : 400,
-                        color: isActive ? 'var(--text-main)' : 'var(--text-muted)',
-                        transition: 'all 0.3s ease'
-                      }}>
-                        {item.label}
-                        {isActive && ' (Active...)'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Technical logs hidden behind progressive disclosure switch */}
-              <div style={{ borderTop: '1px solid var(--panel-border)', paddingTop: '0.85rem' }}>
-                <button
-                  type="button"
-                  className="btn-apply"
-                  onClick={() => setShowRawLogs(!showRawLogs)}
-                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
-                >
-                  {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
-                </button>
-
-                {showRawLogs && (
-                  <div className="progress-console" style={{ marginTop: '0.75rem' }}>
-                    <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
-                      [{new Date().toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
-                    </div>
-                    <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
-                      [{new Date().toLocaleTimeString()}] Claude 3.5 routing queries to LinkedIn API gateway.
-                    </div>
-                    <div style={{ color: '#10b981', fontWeight: 'bold' }}>
-                      &gt; {activeTask.progress}
-                    </div>
-                    <div ref={logConsoleEndRef} />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+            )}
+          </button>
+          <button
+            type="button"
+            className={`workspace-tab ${currentView === 'results' ? 'active' : ''}`}
+            onClick={() => {
+              if (selectedTask) {
+                setCurrentView('results');
+              }
+            }}
+            disabled={!selectedTask}
+            style={{
+              padding: '0.65rem 0',
+              borderBottom: `2px solid ${currentView === 'results' ? 'var(--primary)' : 'transparent'}`,
+              color: selectedTask ? (currentView === 'results' ? 'var(--text-main)' : 'var(--text-muted)') : 'var(--text-muted)',
+              fontWeight: currentView === 'results' ? 600 : 500,
+              background: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              borderTop: 'none',
+              fontSize: '0.82rem',
+              cursor: selectedTask ? 'pointer' : 'not-allowed',
+              opacity: selectedTask ? 1 : 0.5,
+              transition: 'all 0.2s ease',
+              outline: 'none'
+            }}
+          >
+            Results Board
+          </button>
+        </div>
 
         {/* Error Alerts */}
         {error && (
@@ -896,8 +1007,185 @@ export default function App() {
           </div>
         )}
 
-        {/* Job Results Board */}
-        {selectedTask ? (
+        {/* PANEL ROUTING */}
+        {currentView === 'overview' && (
+          /* WORKSPACE OVERVIEW (Approachable non-technical welcome dashboard) */
+          <div className="workspace-overview">
+            <div className="overview-grid">
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">Searches Performed</span>
+                <span className="overview-stat-value">{history.length}</span>
+              </div>
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">Completed Scans</span>
+                <span className="overview-stat-value">
+                  {history.filter(t => t.status === 'COMPLETED').length}
+                </span>
+              </div>
+              <div className="overview-stat-card">
+                <span className="overview-stat-label">System Status</span>
+                <span className="overview-stat-value" style={{ color: health.gateway === 'online' ? 'var(--success)' : 'var(--danger)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.2rem' }}>
+                  <Activity size={16} />
+                  {health.gateway === 'online' ? 'OPERATIONAL' : 'OFFLINE'}
+                </span>
+              </div>
+            </div>
+
+            <div className="panel-card">
+              <div className="card-header">
+                <h3 style={{ fontSize: '0.92rem' }}>Welcome to your AI Career Relocation Assistant</h3>
+              </div>
+              <div className="card-body">
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-main)', marginBottom: '0.85rem', lineHeight: '1.6' }}>
+                  This assistant uses advanced artificial intelligence to index job vacancies, filtering out positions that do not officially support international relocation packages or visa sponsorships. It simplifies your search for work abroad by isolating verified postings instantly.
+                </p>
+                <h4 style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem', marginTop: '1.25rem' }}>
+                  How to get started:
+                </h4>
+                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.5rem', lineHeight: '1.5' }}>
+                  <li><strong>1. Choose your Target Role and Country</strong>: In the <strong>Scan Options</strong> form on the left sidebar, enter the job title you want and select the destination country.</li>
+                  <li><strong>2. Start the AI Scan</strong>: Click the <strong>Scan Visa Jobs</strong> button. The AI will immediately connect and scan LinkedIn in real time. You can monitor its friendly progress steps in the active scans tab.</li>
+                  <li><strong>3. Explore and Save</strong>: View your results in the dashboard. You can search them dynamically by typing in the keyword box, or download them as an Excel-friendly CSV sheet using the <strong>Save as Excel (CSV)</strong> button.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'active-scans' && (
+          /* ACTIVE SCANS PAGE (Beautiful grid panel displaying all running scans simultaneously) */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {activeTaskIds.length === 0 ? (
+              <div className="panel-card" style={{ padding: '3rem 1.5rem', textAlign: 'center' }}>
+                <Activity size={32} style={{ color: 'var(--text-muted)', margin: '0 auto 1rem', display: 'block' }} />
+                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-main)' }}>No Active Scans Running</h3>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  Configure your query in the left sidebar and click <strong>Scan Visa Jobs</strong> to trigger a live market scraping scan.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
+                {Object.values(activeTasks).map((task) => {
+                  const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status);
+                  
+                  return (
+                    <div key={task.id} className="panel-card" style={{ borderColor: 'var(--primary)' }}>
+                      <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <Loader2 className="animate-spin" size={16} style={{ color: 'var(--primary)', display: 'inline-block', transformOrigin: 'center' }} />
+                          <h3 style={{ fontSize: '0.92rem', margin: 0 }}>
+                            AI Assistant scanning: {task.job_title} in {task.country}
+                          </h3>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`}>
+                            {task.status === 'RUNNING' ? 'Running' : task.status === 'PENDING' ? 'Pending' : task.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => cancelActiveScan(task.id)}
+                            className="btn-apply"
+                            style={{
+                              fontSize: '0.72rem',
+                              padding: '0.2rem 0.45rem',
+                              background: 'rgba(220, 38, 38, 0.06)',
+                              color: 'var(--danger)',
+                              border: '1px solid rgba(220, 38, 38, 0.2)',
+                              cursor: 'pointer'
+                            }}
+                            title="Cancel running scan and delete task"
+                          >
+                            Cancel Scan
+                          </button>
+                        </div>
+                      </div>
+                      <div className="card-body">
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+                          Scanning LinkedIn for up to {task.limit_count} job postings posted in the last {task.last_days} days.
+                          {task.experience_years !== null && ` Experience: ~${task.experience_years} years.`}
+                          {task.workplace_type !== 'all' && ` Office: ${task.workplace_type}.`}
+                        </p>
+
+                        {/* Graphical Step Checklist for easy non-tech understanding */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                          {[
+                            { label: 'Connecting to the AI service engine', step: 0 },
+                            { label: 'Initializing the LinkedIn scraper agent', step: 1 },
+                            { label: 'Scanning LinkedIn for visa-friendly job leads', step: 2 },
+                            { label: 'Evaluating relocation & sponsorship details', step: 3 },
+                            { label: 'Saving search results safely to your storage', step: 4 }
+                          ].map((item, idx) => {
+                            const isDone = currentStep > item.step;
+                            const isActive = currentStep === item.step;
+
+                            return (
+                              <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.82rem' }}>
+                                <div style={{
+                                  width: '16px',
+                                  height: '16px',
+                                  borderRadius: '50%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '0.65rem',
+                                  fontWeight: 700,
+                                  background: isDone ? 'var(--success-glow)' : isActive ? 'var(--primary-glow)' : 'var(--bg-color)',
+                                  color: isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--text-muted)',
+                                  border: `1px solid ${isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--panel-border)'}`,
+                                  transition: 'all 0.3s ease'
+                                }}>
+                                  {isDone ? '✓' : idx + 1}
+                                </div>
+                                <span style={{
+                                  fontWeight: isActive ? 600 : 400,
+                                  color: isActive ? 'var(--text-main)' : 'var(--text-muted)',
+                                  transition: 'all 0.3s ease'
+                                }}>
+                                  {item.label}
+                                  {isActive && ' (Active...)'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Technical logs hidden behind progressive disclosure switch */}
+                        <div style={{ borderTop: '1px solid var(--panel-border)', paddingTop: '0.85rem' }}>
+                          <button
+                            type="button"
+                            className="btn-apply"
+                            onClick={() => setShowRawLogs(!showRawLogs)}
+                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
+                          >
+                            {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
+                          </button>
+
+                          {showRawLogs && (
+                            <div className="progress-console" style={{ marginTop: '0.75rem' }}>
+                              <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                [{new Date(task.created_at).toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
+                              </div>
+                              <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
+                                [{new Date(task.created_at).toLocaleTimeString()}] Claude 3.5 routing queries to LinkedIn API gateway.
+                              </div>
+                              <div style={{ color: '#10b981', fontWeight: 'bold' }}>
+                                &gt; {task.progress}
+                              </div>
+                              <div ref={logConsoleEndRef} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentView === 'results' && selectedTask && (
+          /* JOB RESULTS BOARD */
           <div className="panel-card" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
             <div className="card-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
               <div>
@@ -1051,48 +1339,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </div>
-          </div>
-        ) : (
-          /* WORKSPACE OVERVIEW (Approachable non-technical welcome dashboard) */
-          <div className="workspace-overview">
-            <div className="overview-grid">
-              <div className="overview-stat-card">
-                <span className="overview-stat-label">Searches Performed</span>
-                <span className="overview-stat-value">{history.length}</span>
-              </div>
-              <div className="overview-stat-card">
-                <span className="overview-stat-label">Completed Scans</span>
-                <span className="overview-stat-value">
-                  {history.filter(t => t.status === 'COMPLETED').length}
-                </span>
-              </div>
-              <div className="overview-stat-card">
-                <span className="overview-stat-label">System Status</span>
-                <span className="overview-stat-value" style={{ color: health.gateway === 'online' ? 'var(--success)' : 'var(--danger)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.2rem' }}>
-                  <Activity size={16} />
-                  {health.gateway === 'online' ? 'OPERATIONAL' : 'OFFLINE'}
-                </span>
-              </div>
-            </div>
-
-            <div className="panel-card">
-              <div className="card-header">
-                <h3 style={{ fontSize: '0.92rem' }}>Welcome to your AI Career Relocation Assistant</h3>
-              </div>
-              <div className="card-body">
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-main)', marginBottom: '0.85rem', lineHeight: '1.6' }}>
-                  This assistant uses advanced artificial intelligence to index job vacancies, filtering out positions that do not officially support international relocation packages or visa sponsorships. It simplifies your search for work abroad by isolating verified postings instantly.
-                </p>
-                <h4 style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '0.5rem', marginTop: '1.25rem' }}>
-                  How to get started:
-                </h4>
-                <ul style={{ paddingLeft: '1.25rem', fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.5rem', lineHeight: '1.5' }}>
-                  <li><strong>1. Choose your Target Role and Country</strong>: In the <strong>Scan Options</strong> form on the left sidebar, enter the job title you want and select the destination country.</li>
-                  <li><strong>2. Start the AI Scan</strong>: Click the <strong>Scan Visa Jobs</strong> button. The AI will immediately connect and scan LinkedIn in real time. You can monitor its friendly progress steps above.</li>
-                  <li><strong>3. Explore and Save</strong>: View your results in the dashboard. You can search them dynamically by typing in the keyword box, or download them as an Excel-friendly CSV sheet using the <strong>Save as Excel (CSV)</strong> button.</li>
-                </ul>
-              </div>
             </div>
           </div>
         )}
