@@ -397,11 +397,22 @@ export default function App() {
       results.forEach(({ id, task }) => {
         if (!task) return;
 
-        if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+        if (task.status === 'FAILED') {
           completedIds.push(id);
           delete nextActiveTasks[id];
-          if (task.status === 'COMPLETED') {
+        } else if (task.status === 'COMPLETED') {
+          // Defensively wait until results are fully written to gateway storage
+          if (task.result_json !== null || task.result_markdown !== null) {
+            completedIds.push(id);
+            delete nextActiveTasks[id];
             finishedTaskToSelect = task;
+          } else {
+            // Keep task in polling state with a status message until results are flushed
+            nextActiveTasks[id] = {
+              ...task,
+              status: 'RUNNING',
+              progress: 'Finalizing and saving job search results...'
+            };
           }
         } else {
           nextActiveTasks[id] = task;
