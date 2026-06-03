@@ -36,6 +36,7 @@ export const bootstrapDatabase = async () => {
         );
         ALTER TABLE search_tasks ADD COLUMN IF NOT EXISTS experience_years INT;
         ALTER TABLE search_tasks ADD COLUMN IF NOT EXISTS workplace_type VARCHAR(50);
+        ALTER TABLE search_tasks ADD COLUMN IF NOT EXISTS result_json TEXT;
       `;
       
       await pool.query(initTableQuery);
