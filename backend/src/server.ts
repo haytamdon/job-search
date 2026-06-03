@@ -23,13 +23,13 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       const progress = data.progress || 'Scanning jobs...';
       const errorMessage = data.error || null;
       let completedAt = null;
-      let resultMarkdown = null;
+      let resultJson = null;
       
       if (status === 'COMPLETED') {
         completedAt = new Date().toISOString();
         const resultKeys = Object.keys(data.results || {});
         if (resultKeys.length > 0) {
-          resultMarkdown = data.results[resultKeys[0]]; // markdown table string
+          resultJson = data.results[resultKeys[0]]; // structured JSON string
         }
       } else if (status === 'FAILED') {
         completedAt = new Date().toISOString();
@@ -40,9 +40,9 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
         console.log(`Task ${taskId} finished with status: ${status}. Updating database...`);
         await db.query(
           `UPDATE search_tasks 
-           SET status = $1, progress = $2, result_markdown = $3, error_message = $4, completed_at = $5
+           SET status = $1, progress = $2, result_json = $3, error_message = $4, completed_at = $5
            WHERE id = $6`,
-          [status, progress, resultMarkdown, errorMessage, completedAt, taskId]
+          [status, progress, resultJson, errorMessage, completedAt, taskId]
         );
       } else {
         // Task still running, update progress and status
@@ -208,15 +208,15 @@ app.post('/api/jobs/search/sync', async (req, res) => {
     
     const results = msResponse.data.results || {};
     const resultKeys = Object.keys(results);
-    const resultMarkdown = resultKeys.length > 0 ? results[resultKeys[0]] : null;
+    const resultJson = resultKeys.length > 0 ? results[resultKeys[0]] : null;
     const completedAt = new Date().toISOString();
     
     // Update database as COMPLETED
     await db.query(
       `UPDATE search_tasks 
-       SET status = 'COMPLETED', progress = 'Search completed successfully.', result_markdown = $1, completed_at = $2
+       SET status = 'COMPLETED', progress = 'Search completed successfully.', result_json = $1, completed_at = $2
        WHERE id = $3`,
-      [resultMarkdown, completedAt, taskId]
+      [resultJson, completedAt, taskId]
     );
     
     res.json({

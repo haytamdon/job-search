@@ -25,7 +25,7 @@ COPY pyproject.toml /app/
 RUN uv pip install -r pyproject.toml
 
 # Copy microservice code
-COPY app.py /app/
+COPY *.py /app/
 
 # Expose microservice port
 EXPOSE 8000
