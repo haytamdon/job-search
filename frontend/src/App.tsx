@@ -36,6 +36,7 @@ interface TaskHistory {
 
 interface SelectedTaskDetail extends TaskHistory {
   result_markdown: string | null;
+  result_json?: string | null;
 }
 
 interface ParsedJob {
@@ -323,6 +324,29 @@ export default function App() {
     }
   };
 
+  // Parse structured JSON returned by MCPAgent
+  const parseJobsJson = (jsonStr: string | null): ParsedJob[] => {
+    if (!jsonStr) return [];
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (Array.isArray(parsed)) {
+        return parsed.map((job: any) => ({
+          title: job.title || 'Job Title',
+          company: job.company || 'Company',
+          location: job.location || 'Location',
+          salaryrange: job.salaryrange || job.salary || 'N/A',
+          description: job.description || '',
+          publishingdate: job.publishingdate || job.date || 'N/A',
+          link: job.link || 'Apply Link',
+          link_url: job.link_url || job.link || ''
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to parse jobs JSON:', err);
+    }
+    return [];
+  };
+
   // Get specific task detail
   const selectTaskDetail = async (id: string, select = true) => {
     try {
@@ -330,7 +354,10 @@ export default function App() {
       const taskDetail = response.data;
       if (select) {
         setSelectedTask(taskDetail);
-        setParsedJobs(parseJobsMarkdown(taskDetail.result_markdown));
+        const jobs = taskDetail.result_json 
+          ? parseJobsJson(taskDetail.result_json) 
+          : parseJobsMarkdown(taskDetail.result_markdown);
+        setParsedJobs(jobs);
         setCurrentView('results'); // Switch view when selecting a task from history
       }
       return taskDetail;
@@ -370,11 +397,22 @@ export default function App() {
       results.forEach(({ id, task }) => {
         if (!task) return;
 
-        if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+        if (task.status === 'FAILED') {
           completedIds.push(id);
           delete nextActiveTasks[id];
-          if (task.status === 'COMPLETED') {
+        } else if (task.status === 'COMPLETED') {
+          // Defensively wait until results are fully written to gateway storage
+          if (task.result_json !== null || task.result_markdown !== null) {
+            completedIds.push(id);
+            delete nextActiveTasks[id];
             finishedTaskToSelect = task;
+          } else {
+            // Keep task in polling state with a status message until results are flushed
+            nextActiveTasks[id] = {
+              ...task,
+              status: 'RUNNING',
+              progress: 'Finalizing and saving job search results...'
+            };
           }
         } else {
           nextActiveTasks[id] = task;
@@ -393,7 +431,10 @@ export default function App() {
         if (finishedTaskToSelect) {
           const task = finishedTaskToSelect as SelectedTaskDetail;
           setSelectedTask(task);
-          setParsedJobs(parseJobsMarkdown(task.result_markdown));
+          const jobs = task.result_json 
+            ? parseJobsJson(task.result_json) 
+            : parseJobsMarkdown(task.result_markdown);
+          setParsedJobs(jobs);
           setCurrentView('results');
         }
       }
@@ -461,7 +502,8 @@ export default function App() {
           error_message: null,
           created_at: new Date().toISOString(),
           completed_at: null,
-          result_markdown: null
+          result_markdown: null,
+          result_json: null
         }
       }));
 

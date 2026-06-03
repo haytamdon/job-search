@@ -1,18 +1,12 @@
-import os
 import uuid
-import asyncio
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from dotenv import load_dotenv
 
-from langchain_openrouter import ChatOpenRouter
-from mcp_use import MCPAgent, MCPClient
-
-# Load environment variables
-load_dotenv()
+# Import local models, configuration, and services
+from models import SearchRequest, TaskResponse
+from services import run_search_logic
 
 app = FastAPI(
     title="LinkedIn Job Search Agent API",
@@ -29,110 +23,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory database for tracking jobs/tasks (Note: gateway will now persist to PostgreSQL)
+# In-memory database for tracking jobs/tasks (Note: gateway persists to PostgreSQL)
 tasks_db: Dict[str, Dict] = {}
-
-class SearchRequest(BaseModel):
-    country: str = Field(default="Germany", description="Country to search in.")
-    job_title: str = Field(default="AI engineer", description="Job title to search.")
-    limit: int = Field(default=150, description="Minimum number of jobs to request.")
-    last_days: int = Field(default=30, description="Lookback window in days.")
-    experience_years: Optional[int] = Field(default=None, description="Preferred years of experience.")
-    workplace_type: Optional[str] = Field(default=None, description="Workplace type: remote, hybrid, on-site, or all.")
-
-class TaskResponse(BaseModel):
-    task_id: str
-    status: str
-    message: str
-    created_at: str
-
-def get_mcp_config() -> dict:
-    """Retrieve MCP Configuration for Bright Data."""
-    brightdata_token = os.getenv("BRIGHTDATA_API_TOKEN")
-    if not brightdata_token:
-        raise ValueError("BRIGHTDATA_API_TOKEN environment variable is not set.")
-    return {
-        "mcpServers": {
-            "Bright Data": {
-                "command": "npx",
-                "args": ["@brightdata/mcp"],
-                "env": {
-                    "API_TOKEN": brightdata_token,
-                    "GROUPS": "advanced_scraping,browser",
-                    "TOOLS": "web_data_linkedin_person_profile,web_data_linkedin_company_profile,web_data_linkedin_job_listings,web_data_linkedin_posts,web_data_linkedin_people_search"
-                }
-            }
-        }
-    }
-
-async def run_search_logic(
-    country: str, 
-    job_title: str, 
-    limit: int, 
-    last_days: int,
-    experience_years: Optional[int] = None,
-    workplace_type: Optional[str] = None,
-    task_id: Optional[str] = None
-) -> Dict[str, str]:
-    """Execute the MCPAgent LinkedIn Job search logic."""
-    config = get_mcp_config()
-    client = MCPClient(config=config)
-    
-    # Initialize ChatOpenRouter LLM
-    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-    if not openrouter_api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
-        
-    llm = ChatOpenRouter(
-        model="anthropic/claude-opus-4.8",
-        api_key=openrouter_api_key,
-    )
-    
-    # Create agent with memory enabled
-    agent = MCPAgent(llm=llm, client=client, max_steps=1000, pretty_print=True, memory_enabled=False)
-    
-    # Ensure local directory for backup saves exists
-    os.makedirs("jobs1", exist_ok=True)
-    
-    results = {}
-    try:
-        if task_id and task_id in tasks_db:
-            tasks_db[task_id]["progress"] = f"Searching for {job_title} in {country}..."
-        
-        prompt = (
-            f"Search Linkedin and any valid source and give me all of the {job_title} "
-            f"jobs posted in {country} in the last {last_days} days (nothing before) that mention the possibility "
-            f"of visa sponsorship and/or relocation support (A MUST).\n"
-        )
-        if experience_years is not None:
-            prompt += f"The jobs should target candidates with around {experience_years} years of experience.\n"
-        if workplace_type and workplace_type.lower() != 'all':
-            prompt += f"The job office presence must be {workplace_type.upper()}.\n"
-            
-        prompt += (
-            f"Give me the title, company, location, salary range, description summary (brief 1-sentence summary of the job/responsibilities), publishing date, and a link to the job.\n"
-            f"All of the job should still be accepting applications.\n"
-            f"Give me at least a {limit} jobs.\n"
-            f"Structure it as a table with columns: Job Title, Company, Location, Salary Range, Description Summary, Relocation Details, Link.\n"
-        )
-        
-        result = await agent.run(prompt, max_steps=1500)
-        result_str = str(result)
-        
-        # Store in result dictionary
-        key = f"{country}_{job_title}"
-        results[key] = result_str
-        
-        # Backup to disk
-        backup_filename = f"jobs1/result_{country}_{job_title.replace(' ', '_')}.md"
-        with open(backup_filename, "w", encoding="utf-8") as f:
-            f.write(result_str)
-                    
-    finally:
-        # Prevent resource/process leaks
-        await client.close_all_sessions()
-        
-    return results
 
 async def background_search_task(
     task_id: str, 
@@ -145,6 +37,11 @@ async def background_search_task(
 ):
     """Background task wrapping the search agent execution."""
     tasks_db[task_id]["status"] = "RUNNING"
+    
+    # Callback to update progress in tasks_db
+    def update_progress(progress_msg: str):
+        tasks_db[task_id]["progress"] = progress_msg
+        
     try:
         results = await run_search_logic(
             country=country,
@@ -153,12 +50,12 @@ async def background_search_task(
             last_days=last_days,
             experience_years=experience_years,
             workplace_type=workplace_type,
-            task_id=task_id
+            on_progress=update_progress
         )
-        tasks_db[task_id]["status"] = "COMPLETED"
-        tasks_db[task_id]["progress"] = "Search completed successfully."
         tasks_db[task_id]["results"] = results
         tasks_db[task_id]["completed_at"] = datetime.utcnow().isoformat()
+        tasks_db[task_id]["progress"] = "Search completed successfully."
+        tasks_db[task_id]["status"] = "COMPLETED"
     except Exception as e:
         tasks_db[task_id]["status"] = "FAILED"
         tasks_db[task_id]["progress"] = "Search failed."
