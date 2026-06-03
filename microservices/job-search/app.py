@@ -52,10 +52,10 @@ async def background_search_task(
             workplace_type=workplace_type,
             on_progress=update_progress
         )
-        tasks_db[task_id]["status"] = "COMPLETED"
-        tasks_db[task_id]["progress"] = "Search completed successfully."
         tasks_db[task_id]["results"] = results
         tasks_db[task_id]["completed_at"] = datetime.utcnow().isoformat()
+        tasks_db[task_id]["progress"] = "Search completed successfully."
+        tasks_db[task_id]["status"] = "COMPLETED"
     except Exception as e:
         tasks_db[task_id]["status"] = "FAILED"
         tasks_db[task_id]["progress"] = "Search failed."
