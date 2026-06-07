@@ -30,6 +30,13 @@ if not openrouter_api_key:
     raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
 
 llm = ChatOpenRouter(
+    # model="deepseek/deepseek-v4-flash",
+    model="anthropic/claude-opus-4.8",
+    api_key=openrouter_api_key,
+)
+
+llm_structured = ChatOpenRouter(
     model="deepseek/deepseek-v4-flash",
     api_key=openrouter_api_key,
 )
+    
