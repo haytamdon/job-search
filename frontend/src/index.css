@@ -606,7 +606,7 @@ tr:hover td {
 }
 
 /* Accessibility Focus States */
-input:focus, select:focus, button:focus, .theme-toggle-btn:focus, .btn-apply:focus {
+input:focus, select:focus, button:focus, .theme-toggle-btn:focus, .btn-apply:focus, .btn-delete:focus {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
@@ -623,6 +623,25 @@ input[type="range"]:focus::-webkit-slider-thumb {
   animation: spin 1s linear infinite;
   display: inline-block;
   transform-origin: center;
+}
+
+/* History Delete Button */
+.btn-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
 }
 
 

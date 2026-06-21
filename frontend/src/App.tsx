@@ -94,6 +94,8 @@ export default function App() {
     setActiveTaskIds(ids);
   };
   const [activeTasks, setActiveTasks] = useState<Record<string, SelectedTaskDetail>>({});
+  // Track tasks that have finished (COMPLETED or FAILED) but remain visible in the panel
+  const [settledTaskIds, setSettledTaskIds] = useState<string[]>([]);
   
   const [selectedTask, setSelectedTask] = useState<SelectedTaskDetail | null>(null);
   const [parsedJobs, setParsedJobs] = useState<ParsedJob[]>([]);
@@ -147,6 +149,7 @@ export default function App() {
       if (selectedTask?.id === id) {
         setSelectedTask(null);
         setParsedJobs([]);
+        setCurrentView('overview');
       }
       fetchHistory();
     } catch (err) {
@@ -214,7 +217,6 @@ export default function App() {
   // Helper to map log progress to step indices (0-4) with time-based progression
   const getActiveProgressStep = (createdAt: string, progress: string, status: string): number => {
     if (status === 'COMPLETED') return 5;
-    if (status === 'FAILED') return -1;
 
     const elapsedMs = Date.now() - new Date(createdAt).getTime();
     const elapsedSec = Math.max(0, elapsedMs / 1000);
@@ -234,7 +236,8 @@ export default function App() {
     else if (lower.includes('routing') || lower.includes('scraping') || lower.includes('linkedin') || lower.includes('scan') || lower.includes('agent')) contentStep = 2;
     else if (lower.includes('spawning') || lower.includes('langchain') || lower.includes('openrouter') || lower.includes('client')) contentStep = 1;
 
-    // Combine both: take the maximum step to ensure progressive flow
+    // For FAILED status: return the last known step (so the failure marker shows at the right position)
+    // For all other statuses: combine both signals and take the maximum for progressive flow
     return Math.max(timeStep, contentStep);
   };
 
@@ -395,20 +398,25 @@ export default function App() {
       const completedIds: string[] = [];
       let finishedTaskToSelect: SelectedTaskDetail | null = null;
 
+      const newlySettledIds: string[] = [];
+
       results.forEach(({ id, task }) => {
         if (!task) return;
 
         if (task.status === 'FAILED') {
+          // Stop polling this task, but keep it visible in the panel as FAILED
           completedIds.push(id);
-          delete nextActiveTasks[id];
+          newlySettledIds.push(id);
+          nextActiveTasks[id] = task; // keep in activeTasks so the card stays rendered
         } else if (task.status === 'COMPLETED') {
-          // Defensively wait until results are fully written to gateway storage
+          // Only finalise once results are fully written to gateway storage (last step)
           if (task.result_json !== null || task.result_markdown !== null) {
             completedIds.push(id);
-            delete nextActiveTasks[id];
+            newlySettledIds.push(id);
+            nextActiveTasks[id] = task; // keep card visible briefly before auto-navigate
             finishedTaskToSelect = task;
           } else {
-            // Keep task in polling state with a status message until results are flushed
+            // Keep task in polling state until results are flushed from the DB
             nextActiveTasks[id] = {
               ...task,
               status: 'RUNNING',
@@ -419,6 +427,10 @@ export default function App() {
           nextActiveTasks[id] = task;
         }
       });
+
+      if (newlySettledIds.length > 0) {
+        setSettledTaskIds(prev => [...new Set([...prev, ...newlySettledIds])]);
+      }
 
       // Update state for active tasks
       setActiveTasks(nextActiveTasks);
@@ -861,11 +873,10 @@ export default function App() {
                       <button
                         type="button"
                         onClick={(e) => deleteTaskDetail(e, task.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.1rem', display: 'flex', color: 'var(--text-muted)' }}
                         title="Remove search history"
-                        className="btn-icon"
+                        className="btn-delete"
                       >
-                        <Trash2 size={11} />
+                        <Trash2 size={13} />
                       </button>
                     </div>
                   </div>
@@ -1079,37 +1090,90 @@ export default function App() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
                 {Object.values(activeTasks).map((task) => {
+                  const isFailed = task.status === 'FAILED';
+                  const isCompleted = task.status === 'COMPLETED';
+                  const isSettled = settledTaskIds.includes(task.id);
                   const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status);
                   
                   return (
-                    <div key={task.id} className="panel-card" style={{ borderColor: 'var(--primary)' }}>
+                    <div key={task.id} className="panel-card" style={{
+                      borderColor: isFailed ? 'var(--danger)' : isCompleted ? 'var(--success)' : 'var(--primary)'
+                    }}>
+                      {/* FAILED banner */}
+                      {isFailed && (
+                        <div style={{
+                          background: 'rgba(220, 38, 38, 0.08)',
+                          borderBottom: '1px solid rgba(220, 38, 38, 0.2)',
+                          padding: '0.5rem 1rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          borderRadius: '8px 8px 0 0'
+                        }}>
+                          <AlertCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 600 }}>
+                            Scan Failed — {task.error_message || 'An error occurred during the job search.'}
+                          </span>
+                        </div>
+                      )}
                       <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <Loader2 className="animate-spin" size={16} style={{ color: 'var(--primary)', display: 'inline-block', transformOrigin: 'center' }} />
+                          {isFailed ? (
+                            <AlertCircle size={16} style={{ color: 'var(--danger)' }} />
+                          ) : isCompleted ? (
+                            <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+                          ) : (
+                            <Loader2 className="animate-spin" size={16} style={{ color: 'var(--primary)', display: 'inline-block', transformOrigin: 'center' }} />
+                          )}
                           <h3 style={{ fontSize: '0.92rem', margin: 0 }}>
-                            AI Assistant scanning: {task.job_title} in {task.country}
+                            {isFailed ? 'Scan failed:' : isCompleted ? 'Scan completed:' : 'AI Assistant scanning:'} {task.job_title} in {task.country}
                           </h3>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                           <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`}>
                             {task.status === 'RUNNING' ? 'Running' : task.status === 'PENDING' ? 'Pending' : task.status}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => cancelActiveScan(task.id)}
-                            className="btn-apply"
-                            style={{
-                              fontSize: '0.72rem',
-                              padding: '0.2rem 0.45rem',
-                              background: 'rgba(220, 38, 38, 0.06)',
-                              color: 'var(--danger)',
-                              border: '1px solid rgba(220, 38, 38, 0.2)',
-                              cursor: 'pointer'
-                            }}
-                            title="Cancel running scan and delete task"
-                          >
-                            Cancel Scan
-                          </button>
+                          {!isSettled && (
+                            <button
+                              type="button"
+                              onClick={() => cancelActiveScan(task.id)}
+                              className="btn-apply"
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '0.2rem 0.45rem',
+                                background: 'rgba(220, 38, 38, 0.06)',
+                                color: 'var(--danger)',
+                                border: '1px solid rgba(220, 38, 38, 0.2)',
+                                cursor: 'pointer'
+                              }}
+                              title="Cancel running scan and delete task"
+                            >
+                              Cancel Scan
+                            </button>
+                          )}
+                          {isSettled && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Dismiss this settled card from the active panel
+                                setActiveTasks(prev => {
+                                  const copy = { ...prev };
+                                  delete copy[task.id];
+                                  return copy;
+                                });
+                                setSettledTaskIds(prev => prev.filter(sid => sid !== task.id));
+                              }}
+                              className="btn-apply"
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '0.2rem 0.45rem',
+                                cursor: 'pointer'
+                              }}
+                              title="Dismiss this notification"
+                            >
+                              Dismiss
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="card-body">
@@ -1128,8 +1192,14 @@ export default function App() {
                             { label: 'Evaluating relocation & sponsorship details', step: 3 },
                             { label: 'Saving search results safely to your storage', step: 4 }
                           ].map((item, idx) => {
-                            const isDone = currentStep > item.step;
-                            const isActive = currentStep === item.step;
+                            // For FAILED tasks: mark all steps up to the active one as failed, rest greyed
+                            const isDone = isFailed
+                              ? false // never show green check on failed tasks
+                              : currentStep > item.step;
+                            const isActive = !isFailed && currentStep === item.step;
+                            const isFaultedStep = isFailed && currentStep === item.step;
+                            // Steps before the failure point still show as completed grey
+                            const isPastFailed = isFailed && currentStep > item.step;
 
                             return (
                               <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', fontSize: '0.82rem' }}>
@@ -1142,20 +1212,51 @@ export default function App() {
                                   justifyContent: 'center',
                                   fontSize: '0.65rem',
                                   fontWeight: 700,
-                                  background: isDone ? 'var(--success-glow)' : isActive ? 'var(--primary-glow)' : 'var(--bg-color)',
-                                  color: isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--text-muted)',
-                                  border: `1px solid ${isDone ? 'var(--success)' : isActive ? 'var(--primary)' : 'var(--panel-border)'}`,
+                                  background: isFaultedStep
+                                    ? 'rgba(220,38,38,0.12)'
+                                    : isPastFailed
+                                      ? 'var(--bg-color)'
+                                      : isDone
+                                        ? 'var(--success-glow)'
+                                        : isActive
+                                          ? 'var(--primary-glow)'
+                                          : 'var(--bg-color)',
+                                  color: isFaultedStep
+                                    ? 'var(--danger)'
+                                    : isPastFailed
+                                      ? 'var(--text-muted)'
+                                      : isDone
+                                        ? 'var(--success)'
+                                        : isActive
+                                          ? 'var(--primary)'
+                                          : 'var(--text-muted)',
+                                  border: `1px solid ${
+                                    isFaultedStep
+                                      ? 'var(--danger)'
+                                      : isPastFailed
+                                        ? 'var(--panel-border)'
+                                        : isDone
+                                          ? 'var(--success)'
+                                          : isActive
+                                            ? 'var(--primary)'
+                                            : 'var(--panel-border)'
+                                  }`,
                                   transition: 'all 0.3s ease'
                                 }}>
-                                  {isDone ? '✓' : idx + 1}
+                                  {isFaultedStep ? '✗' : isPastFailed ? idx + 1 : isDone ? '✓' : idx + 1}
                                 </div>
                                 <span style={{
-                                  fontWeight: isActive ? 600 : 400,
-                                  color: isActive ? 'var(--text-main)' : 'var(--text-muted)',
+                                  fontWeight: isActive || isFaultedStep ? 600 : 400,
+                                  color: isFaultedStep
+                                    ? 'var(--danger)'
+                                    : isActive
+                                      ? 'var(--text-main)'
+                                      : 'var(--text-muted)',
                                   transition: 'all 0.3s ease'
                                 }}>
                                   {item.label}
                                   {isActive && ' (Active...)'}
+                                  {isFaultedStep && ' — FAILED'}
                                 </span>
                               </div>
                             );
