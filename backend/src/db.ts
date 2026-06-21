@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres-db:5432/jobsearch';
+const connectionString = process.env.DATABASE_URL || `postgresql://postgres:postgres@localhost:${process.env.DB_PORT || '5432'}/jobsearch`;
 
 export const pool = new Pool({
   connectionString,

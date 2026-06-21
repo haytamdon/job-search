@@ -17,7 +17,8 @@ import {
   Download
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:3000';
+const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '3000';
+const API_BASE = import.meta.env.VITE_API_BASE || `http://localhost:${BACKEND_PORT}`;
 
 interface TaskHistory {
   id: string;
@@ -636,36 +637,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* System Diagnostics Health gauges */}
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">
-            <span>System Status</span>
-            <Activity size={11} />
-          </div>
-          <div className="diagnostics-stack">
-            <div className="diagnostic-item">
-              <span>Dashboard Service</span>
-              <div className="diagnostic-status">
-                <span className={`status-dot ${health.gateway === 'online' ? 'online' : 'offline'}`} />
-                <span>{health.gateway === 'online' ? 'OPERATIONAL' : 'OFFLINE'}</span>
-              </div>
-            </div>
-            <div className="diagnostic-item">
-              <span>Database Storage</span>
-              <div className="diagnostic-status">
-                <span className={`status-dot ${health.database === 'online' ? 'online' : health.database === 'error' ? 'warning' : 'offline'}`} />
-                <span>{health.database === 'online' ? 'OPERATIONAL' : health.database === 'error' ? 'WARNING' : 'OFFLINE'}</span>
-              </div>
-            </div>
-            <div className="diagnostic-item">
-              <span>AI Search Engine</span>
-              <div className="diagnostic-status">
-                <span className={`status-dot ${health.microservice === 'online' ? 'online' : 'offline'}`} />
-                <span>{health.microservice === 'online' ? 'OPERATIONAL' : 'OFFLINE'}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* Search Parameter Options Form */}
         <div className="sidebar-section">

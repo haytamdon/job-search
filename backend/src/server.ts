@@ -5,8 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import * as db from './db';
 
 const app = express();
-const port = process.env.PORT || 3000;
-const MICROSERVICE_URL = process.env.MICROSERVICE_URL || 'http://microservice-job-search:8000';
+const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
+const MICROSERVICE_URL = process.env.MICROSERVICE_URL || `http://localhost:${process.env.AGENT_PORT || '8000'}`;
 
 app.use(cors());
 app.use(express.json());
