@@ -1315,69 +1315,69 @@ export default function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                     <span>Showing <strong>{filteredJobs.length}</strong> of <strong>{parsedJobs.length}</strong> visa relocation items resolved</span>
                     <span>Requested maximum limit: {selectedTask.limit_count} listings</span>
-                  </div>
-
-                  {/* High-density zebra styled datatable */}
+                  </div>                  {/* High-density zebra styled datatable */}
                   <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Job Title</th>
-                          <th>Company</th>
-                          <th>City / Country</th>
-                          <th>Salary Estimate</th>
-                          <th>Description Summary</th>
-                          <th>Relocation Support</th>
-                          <th>Apply Link</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredJobs.map((job, idx) => (
-                          <tr key={idx}>
-                            <td style={{ fontWeight: 600 }}>{job.title}</td>
-                            <td>{job.company}</td>
-                            <td>{job.location}</td>
-                            <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
-                            <td>
-                              <div style={{
-                                maxWidth: '240px',
-                                fontSize: '0.78rem',
-                                color: 'var(--text-muted)',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'normal',
-                                lineHeight: '1.3'
-                              }} title={job.description}>
-                                {job.description || 'N/A'}
-                              </div>
-                            </td>
-                            <td>
-                              <span className="badge badge-relocation">
-                                Visa Support
-                              </span>
-                            </td>
-                            <td>
-                              {job.link_url ? (
-                                <a
-                                  href={job.link_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="btn-apply"
-                                >
-                                  Apply
-                                  <ExternalLink size={10} />
-                                </a>
-                              ) : (
-                                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>N/A</span>
-                              )}
-                            </td>
+                    <div className="table-inner-wrapper">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Job Title</th>
+                            <th>Company</th>
+                            <th>City / Country</th>
+                            <th>Salary Estimate</th>
+                            <th>Description Summary</th>
+                            <th>Relocation Support</th>
+                            <th>Apply Link</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {filteredJobs.map((job, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 600 }}>{job.title}</td>
+                              <td>{job.company}</td>
+                              <td>{job.location}</td>
+                              <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
+                              <td>
+                                <div style={{
+                                  maxWidth: '240px',
+                                  fontSize: '0.78rem',
+                                  color: 'var(--text-muted)',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'normal',
+                                  lineHeight: '1.3'
+                                }} title={job.description}>
+                                  {job.description || 'N/A'}
+                                </div>
+                              </td>
+                              <td>
+                                <span className="badge badge-relocation">
+                                  Visa Support
+                                </span>
+                              </td>
+                              <td>
+                                {job.link_url ? (
+                                  <a
+                                    href={job.link_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="btn-apply"
+                                  >
+                                    Apply
+                                    <ExternalLink size={10} />
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>N/A</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}

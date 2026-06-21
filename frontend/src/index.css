@@ -473,7 +473,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-radius: 6px;
   border: 1px solid var(--panel-border);
   background: var(--panel-bg);
-  padding-bottom: 1.25rem;
+}
+
+.table-inner-wrapper {
+  padding-bottom: 1.5rem;
 }
 
 table {
@@ -482,7 +485,6 @@ table {
   border-spacing: 0;
   text-align: left;
   font-size: 0.84rem;
-  margin-bottom: 1rem;
 }
 
 th {
