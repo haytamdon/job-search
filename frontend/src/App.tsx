@@ -521,6 +521,8 @@ export default function App() {
           status: 'PENDING',
           progress: 'Task queued...',
           error_message: null,
+          experience_years: experienceYears !== '' ? Number(experienceYears) : null,
+          workplace_type: workplaceType,
           created_at: new Date().toISOString(),
           completed_at: null,
           result_markdown: null,
