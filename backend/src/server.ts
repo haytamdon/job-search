@@ -418,8 +418,30 @@ app.post('/api/jobs/search/sync', async (req, res) => {
 });
 
 // Bootstrap database and start Express server
-db.bootstrapDatabase().then(() => {
-  app.listen(port, () => {
-    console.log(`TypeScript Gateway server running on port ${port}`);
+db.bootstrapDatabase()
+  .then(() => {
+    const server = app.listen(port, () => {
+      console.log(`TypeScript Gateway server running on port ${port}`);
+    });
+
+    server.on('error', (err) => {
+      console.error('Express server failed:', err);
+      process.exit(1);
+    });
+
+    const shutdown = () => {
+      console.log('Shutting down TypeScript Gateway server...');
+      activePollers.forEach((poller) => clearInterval(poller));
+      activePollers.clear();
+      server.close(() => {
+        db.pool.end().finally(() => process.exit(0));
+      });
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+  })
+  .catch((err) => {
+    console.error('Failed to bootstrap database:', err);
+    process.exit(1);
   });
-});
