@@ -77,6 +77,20 @@ const parseTaskStatus = (status: unknown): TaskStatus => {
   return 'FAILED';
 };
 
+const getResultJson = (results: any, country: string, jobTitle: string) => {
+  if (!results || typeof results !== 'object') {
+    return JSON.stringify([]);
+  }
+
+  const expectedKey = `${country}_${jobTitle}`;
+  if (typeof results[expectedKey] === 'string') {
+    return results[expectedKey];
+  }
+
+  const resultValues = Object.values(results).filter((value): value is string => typeof value === 'string');
+  return resultValues[0] || JSON.stringify([]);
+};
+
 const parseSearchRequest = (body: any): { value?: SearchInput; error?: string } => {
   const country = parseStringField(body?.country, 'Germany', 'country', 100);
   if (country.error || country.value === undefined) return { error: country.error };
@@ -150,10 +164,7 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
 
       if (status === 'COMPLETED') {
         completedAt = new Date().toISOString();
-        const resultKeys = Object.keys(data.results || {});
-        if (resultKeys.length > 0) {
-          resultJson = data.results[resultKeys[0]]; // structured JSON string
-        }
+        resultJson = getResultJson(data.results, data.country || '', data.job_title || '');
       } else if (status === 'FAILED') {
         completedAt = new Date().toISOString();
       }
@@ -369,8 +380,7 @@ app.post('/api/jobs/search/sync', async (req, res) => {
     }, { timeout: MICROSERVICE_SYNC_TIMEOUT_MS });
     
     const results = msResponse.data.results || {};
-    const resultKeys = Object.keys(results);
-    const resultJson = resultKeys.length > 0 ? results[resultKeys[0]] : null;
+    const resultJson = getResultJson(results, country, job_title);
     const completedAt = new Date().toISOString();
     
     // Update database as COMPLETED
