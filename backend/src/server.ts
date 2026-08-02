@@ -7,24 +7,39 @@ import * as db from './db';
 const app = express();
 const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
 const MICROSERVICE_URL = process.env.MICROSERVICE_URL || `http://localhost:${process.env.AGENT_PORT || '8000'}`;
+const POLL_INTERVAL_MS = 4000;
+const MAX_POLL_FAILURES = 5;
 
 app.use(cors());
 app.use(express.json());
 
 // Background polling manager for active python microservice tasks
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
+  let consecutiveFailures = 0;
+
+  const failTaskAndStop = async (interval: NodeJS.Timeout, message: string) => {
+    clearInterval(interval);
+    await db.query(
+      `UPDATE search_tasks
+       SET status = 'FAILED', progress = $1, error_message = $2, completed_at = $3
+       WHERE id = $4`,
+      [message, message, new Date().toISOString(), taskId]
+    );
+  };
+
   const interval = setInterval(async () => {
     try {
       console.log(`Polling status for Python task: ${pythonTaskId} (Local DB ID: ${taskId})`);
       const response = await axios.get(`${MICROSERVICE_URL}/api/jobs/tasks/${pythonTaskId}`);
+      consecutiveFailures = 0;
       const data = response.data;
-      
+
       const status = data.status;
       const progress = data.progress || 'Scanning jobs...';
       const errorMessage = data.error || null;
       let completedAt = null;
       let resultJson = null;
-      
+
       if (status === 'COMPLETED') {
         completedAt = new Date().toISOString();
         const resultKeys = Object.keys(data.results || {});
@@ -34,12 +49,12 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       } else if (status === 'FAILED') {
         completedAt = new Date().toISOString();
       }
-      
+
       if (status === 'COMPLETED' || status === 'FAILED') {
         clearInterval(interval);
         console.log(`Task ${taskId} finished with status: ${status}. Updating database...`);
         await db.query(
-          `UPDATE search_tasks 
+          `UPDATE search_tasks
            SET status = $1, progress = $2, result_json = $3, error_message = $4, completed_at = $5
            WHERE id = $6`,
           [status, progress, resultJson, errorMessage, completedAt, taskId]
@@ -47,17 +62,26 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       } else {
         // Task still running, update progress and status
         await db.query(
-          `UPDATE search_tasks 
+          `UPDATE search_tasks
            SET status = $1, progress = $2
            WHERE id = $3`,
           [status, progress, taskId]
         );
       }
     } catch (err: any) {
+      consecutiveFailures += 1;
       console.error(`Error polling Python task ${pythonTaskId} for Local DB ID ${taskId}:`, err.message);
-      // In case the microservice is unreachable, we do not clear the interval immediately to handle transient network issues.
+
+      if (axios.isAxiosError(err) && err.response?.status === 404) {
+        await failTaskAndStop(interval, 'Search task was lost by the Python microservice.');
+        return;
+      }
+
+      if (consecutiveFailures >= MAX_POLL_FAILURES) {
+        await failTaskAndStop(interval, 'Search agent polling failed repeatedly.');
+      }
     }
-  }, 4000);
+  }, POLL_INTERVAL_MS);
 };
 
 // Health Check
