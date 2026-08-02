@@ -190,7 +190,7 @@ export default function App() {
   const downloadCSV = () => {
     if (filteredJobs.length === 0) return;
     try {
-      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Relocation Details', 'Apply Link'];
+      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Publishing Date', 'Relocation Details', 'Apply Link'];
       const csvRows = [];
       csvRows.push(headers.join(','));
 
@@ -200,6 +200,7 @@ export default function App() {
           `"${job.company.replace(/"/g, '""')}"`,
           `"${job.location.replace(/"/g, '""')}"`,
           `"${(job.salaryrange || 'N/A').replace(/"/g, '""')}"`,
+          `"${(job.publishingdate || job.date || 'N/A').replace(/"/g, '""')}"`,
           `"${(job.relocation_details || 'N/A').replace(/"/g, '""')}"`,
           `"${(job.link_url || '').replace(/"/g, '""')}"`
         ];
@@ -1424,6 +1425,7 @@ export default function App() {
                             <th>Company</th>
                             <th>City / Country</th>
                             <th>Salary Estimate</th>
+                            <th>Published</th>
                             <th>Description Summary</th>
                             <th>Relocation Support</th>
                             <th>Apply Link</th>
@@ -1436,6 +1438,7 @@ export default function App() {
                               <td>{job.company}</td>
                               <td>{job.location}</td>
                               <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
+                              <td>{job.publishingdate || job.date || 'N/A'}</td>
                               <td>
                                 <div style={{
                                   maxWidth: '240px',
