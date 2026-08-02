@@ -9,6 +9,7 @@ const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
 const MICROSERVICE_URL = process.env.MICROSERVICE_URL || `http://localhost:${process.env.AGENT_PORT || '8000'}`;
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
+const activePollers = new Map<string, NodeJS.Timeout>();
 
 app.use(cors());
 app.use(express.json());
@@ -17,8 +18,13 @@ app.use(express.json());
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
   let consecutiveFailures = 0;
 
-  const failTaskAndStop = async (interval: NodeJS.Timeout, message: string) => {
+  const stopPolling = (interval: NodeJS.Timeout) => {
     clearInterval(interval);
+    activePollers.delete(taskId);
+  };
+
+  const failTaskAndStop = async (interval: NodeJS.Timeout, message: string) => {
+    stopPolling(interval);
     await db.query(
       `UPDATE search_tasks
        SET status = 'FAILED', progress = $1, error_message = $2, completed_at = $3
@@ -51,7 +57,7 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       }
 
       if (status === 'COMPLETED' || status === 'FAILED') {
-        clearInterval(interval);
+        stopPolling(interval);
         console.log(`Task ${taskId} finished with status: ${status}. Updating database...`);
         await db.query(
           `UPDATE search_tasks
@@ -82,6 +88,8 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       }
     }
   }, POLL_INTERVAL_MS);
+
+  activePollers.set(taskId, interval);
 };
 
 // Health Check
@@ -141,7 +149,17 @@ app.get('/api/jobs/tasks/:id', async (req, res) => {
 // DELETE /api/jobs/tasks/:id - Delete a specific search task and its results from history
 app.delete('/api/jobs/tasks/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
+    const poller = activePollers.get(req.params.id);
+    if (poller) {
+      clearInterval(poller);
+      activePollers.delete(req.params.id);
+    }
+
+    const result = await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Search task not found.' });
+    }
+
     res.json({ success: true, message: `Task ${req.params.id} successfully deleted.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
