@@ -222,10 +222,11 @@ export default function App() {
   };
 
   // Helper to map log progress to step indices (0-4) with time-based progression
-  const getActiveProgressStep = (createdAt: string, progress: string, status: string): number => {
+  const getActiveProgressStep = (createdAt: string, progress: string, status: string, completedAt?: string | null): number => {
     if (status === 'COMPLETED') return 5;
 
-    const elapsedMs = Date.now() - new Date(createdAt).getTime();
+    const referenceTime = status === 'FAILED' && completedAt ? new Date(completedAt).getTime() : Date.now();
+    const elapsedMs = referenceTime - new Date(createdAt).getTime();
     const elapsedSec = Math.max(0, elapsedMs / 1000);
 
     // Time-based steps
@@ -1107,7 +1108,7 @@ export default function App() {
                   const isCompleted = task.status === 'COMPLETED';
                   const isSettled = settledTaskIds.includes(task.id);
                   const isLogExpanded = expandedLogTaskIds.includes(task.id);
-                  const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status);
+                  const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status, task.completed_at);
                   
                   return (
                     <div key={task.id} className="panel-card" style={{
