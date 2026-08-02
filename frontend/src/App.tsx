@@ -370,11 +370,16 @@ export default function App() {
       const taskDetail = response.data;
       if (select) {
         setSelectedTask(taskDetail);
-        const jobs = taskDetail.result_json 
-          ? parseJobsJson(taskDetail.result_json) 
+        if (taskDetail.status === 'PENDING' || taskDetail.status === 'RUNNING') {
+          setCurrentView('active-scans');
+          return taskDetail;
+        }
+
+        const jobs = taskDetail.result_json
+          ? parseJobsJson(taskDetail.result_json)
           : parseJobsMarkdown(taskDetail.result_markdown);
         setParsedJobs(jobs);
-        setCurrentView('results'); // Switch view when selecting a task from history
+        setCurrentView('results'); // Switch view when selecting a terminal task from history
       }
       return taskDetail;
     } catch (err) {
@@ -410,8 +415,6 @@ export default function App() {
       }
 
       const completedIds: string[] = [];
-      let finishedTaskToSelect: SelectedTaskDetail | null = null;
-
       const newlySettledIds: string[] = [];
       const taskUpdates: Record<string, SelectedTaskDetail> = {};
 
@@ -426,8 +429,7 @@ export default function App() {
         } else if (task.status === 'COMPLETED') {
           completedIds.push(id);
           newlySettledIds.push(id);
-          taskUpdates[id] = task; // keep card visible briefly before auto-navigate
-          finishedTaskToSelect = task;
+          taskUpdates[id] = task; // keep card visible in active scans until dismissed or selected from history
         } else {
           taskUpdates[id] = task;
         }
@@ -453,16 +455,6 @@ export default function App() {
         changeActiveTaskIds(nextActiveIds);
         fetchHistory();
 
-        // If an active task finished successfully, select it and show its results
-        if (finishedTaskToSelect) {
-          const task = finishedTaskToSelect as SelectedTaskDetail;
-          setSelectedTask(task);
-          const jobs = task.result_json 
-            ? parseJobsJson(task.result_json) 
-            : parseJobsMarkdown(task.result_markdown);
-          setParsedJobs(jobs);
-          setCurrentView('results');
-        }
       }
     } catch (err) {
       console.error('Error in batch polling status:', err);
