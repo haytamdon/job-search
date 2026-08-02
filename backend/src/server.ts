@@ -22,6 +22,8 @@ app.use(cors());
 app.use(express.json());
 
 const isValidUuid = (id: string) => validateUuid(id);
+const VALID_TASK_STATUSES = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED'] as const;
+type TaskStatus = typeof VALID_TASK_STATUSES[number];
 
 interface SearchInput {
   country: string;
@@ -65,6 +67,14 @@ const parseIntegerField = (
   }
 
   return { value: parsed };
+};
+
+const parseTaskStatus = (status: unknown): TaskStatus => {
+  if (typeof status === 'string' && VALID_TASK_STATUSES.includes(status as TaskStatus)) {
+    return status as TaskStatus;
+  }
+
+  return 'FAILED';
 };
 
 const parseSearchRequest = (body: any): { value?: SearchInput; error?: string } => {
@@ -132,9 +142,9 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       consecutiveFailures = 0;
       const data = response.data;
 
-      const status = data.status;
-      const progress = data.progress || 'Scanning jobs...';
-      const errorMessage = data.error || null;
+      const status = parseTaskStatus(data.status);
+      const progress = data.progress || (status === 'COMPLETED' ? 'Search completed successfully.' : status === 'FAILED' ? 'Search failed.' : 'Scanning jobs...');
+      const errorMessage = data.error || (data.status === status ? null : `Unexpected search agent status: ${data.status}`);
       let completedAt = null;
       let resultJson = null;
 
