@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
+import { validate as validateUuid, v4 as uuidv4 } from 'uuid';
 import * as db from './db';
 
 const app = express();
@@ -13,6 +13,8 @@ const activePollers = new Map<string, NodeJS.Timeout>();
 
 app.use(cors());
 app.use(express.json());
+
+const isValidUuid = (id: string) => validateUuid(id);
 
 // Background polling manager for active python microservice tasks
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
@@ -135,6 +137,10 @@ app.get('/api/jobs/history', async (req, res) => {
 
 // GET /api/jobs/tasks/:id - Retrieve status and result of a specific search
 app.get('/api/jobs/tasks/:id', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
   try {
     const result = await db.query('SELECT * FROM search_tasks WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) {
@@ -148,6 +154,10 @@ app.get('/api/jobs/tasks/:id', async (req, res) => {
 
 // DELETE /api/jobs/tasks/:id - Delete a specific search task and its results from history
 app.delete('/api/jobs/tasks/:id', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
   try {
     const poller = activePollers.get(req.params.id);
     if (poller) {
