@@ -168,8 +168,8 @@ export default function App() {
   const cancelActiveScan = async (id: string) => {
     if (!window.confirm('Are you sure you want to cancel and delete this running scan?')) return;
     try {
-      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
-      
+      await axios.post(`${API_BASE}/api/jobs/tasks/${id}/cancel`);
+
       const nextActiveIds = activeTaskIdsRef.current.filter(activeId => activeId !== id);
       changeActiveTaskIds(nextActiveIds);
       

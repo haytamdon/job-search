@@ -25,6 +25,7 @@ const microserviceClient = axios.create({
   timeout: MICROSERVICE_TIMEOUT_MS,
 });
 const activePollers = new Map<string, NodeJS.Timeout>();
+const activePythonTaskIds = new Map<string, string>();
 
 app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json());
@@ -140,6 +141,7 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
   const stopPolling = (interval: NodeJS.Timeout) => {
     clearInterval(interval);
     activePollers.delete(taskId);
+    activePythonTaskIds.delete(taskId);
   };
 
   const failTaskAndStop = async (interval: NodeJS.Timeout, message: string) => {
@@ -213,6 +215,7 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
   }, POLL_INTERVAL_MS);
 
   activePollers.set(taskId, interval);
+  activePythonTaskIds.set(taskId, pythonTaskId);
 };
 
 // Health Check
@@ -273,6 +276,45 @@ app.get('/api/jobs/tasks/:id', async (req, res) => {
   }
 });
 
+// POST /api/jobs/tasks/:id/cancel - Cancel an active search task
+app.post('/api/jobs/tasks/:id/cancel', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
+  const poller = activePollers.get(req.params.id);
+  if (poller) {
+    clearInterval(poller);
+    activePollers.delete(req.params.id);
+  }
+  const pythonTaskId = activePythonTaskIds.get(req.params.id);
+  activePythonTaskIds.delete(req.params.id);
+
+  try {
+    const result = await db.query('UPDATE search_tasks SET status = $1, progress = $2, error_message = $3, completed_at = $4 WHERE id = $5 RETURNING *', [
+      'FAILED',
+      'Search cancelled.',
+      'Search cancelled by user.',
+      new Date().toISOString(),
+      req.params.id
+    ]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Search task not found.' });
+    }
+
+    if (pythonTaskId) {
+      await microserviceClient.post(`/api/jobs/tasks/${pythonTaskId}/cancel`).catch((err) => {
+        console.warn(`Could not cancel Python task ${pythonTaskId}:`, err.message);
+      });
+    }
+
+    res.json({ success: true, task: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/jobs/tasks/:id - Delete a specific search task and its results from history
 app.delete('/api/jobs/tasks/:id', async (req, res) => {
   if (!isValidUuid(req.params.id)) {
@@ -285,6 +327,7 @@ app.delete('/api/jobs/tasks/:id', async (req, res) => {
       clearInterval(poller);
       activePollers.delete(req.params.id);
     }
+    activePythonTaskIds.delete(req.params.id);
 
     const result = await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
     if (result.rowCount === 0) {
