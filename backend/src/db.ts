@@ -40,6 +40,17 @@ export const bootstrapDatabase = async () => {
       `;
       
       await pool.query(initTableQuery);
+
+      await pool.query(
+        `UPDATE search_tasks
+         SET status = 'FAILED',
+             progress = 'Search interrupted by backend restart.',
+             error_message = 'Backend restarted before this search completed.',
+             completed_at = NOW()
+         WHERE status IN ('PENDING', 'RUNNING')
+           AND completed_at IS NULL`
+      );
+
       console.log('PostgreSQL database bootstrapping completed (schema is verified/created).');
       break;
     } catch (err: any) {
