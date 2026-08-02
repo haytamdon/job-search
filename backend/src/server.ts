@@ -16,6 +16,83 @@ app.use(express.json());
 
 const isValidUuid = (id: string) => validateUuid(id);
 
+interface SearchInput {
+  country: string;
+  job_title: string;
+  limit: number;
+  last_days: number;
+  experience_years: number | null;
+  workplace_type: 'all' | 'remote' | 'hybrid' | 'on-site';
+}
+
+const parseStringField = (value: unknown, fallback: string, field: string, maxLength: number) => {
+  const rawValue = value === undefined ? fallback : value;
+  if (typeof rawValue !== 'string') {
+    return { error: `${field} must be a string.` };
+  }
+
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) {
+    return { error: `${field} must be between 1 and ${maxLength} characters.` };
+  }
+
+  return { value: trimmed };
+};
+
+const parseIntegerField = (
+  value: unknown,
+  fallback: number,
+  field: string,
+  min: number,
+  max: number,
+  nullable = false
+) => {
+  if (nullable && (value === undefined || value === null || value === '')) {
+    return { value: null };
+  }
+
+  const rawValue = value === undefined ? fallback : value;
+  const parsed = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return { error: `${field} must be an integer between ${min} and ${max}.` };
+  }
+
+  return { value: parsed };
+};
+
+const parseSearchRequest = (body: any): { value?: SearchInput; error?: string } => {
+  const country = parseStringField(body?.country, 'Germany', 'country', 100);
+  if (country.error || country.value === undefined) return { error: country.error };
+
+  const jobTitle = parseStringField(body?.job_title, 'AI engineer', 'job_title', 100);
+  if (jobTitle.error || jobTitle.value === undefined) return { error: jobTitle.error };
+
+  const limit = parseIntegerField(body?.limit, 150, 'limit', 1, 500);
+  if (limit.error || limit.value === undefined || limit.value === null) return { error: limit.error };
+
+  const lastDays = parseIntegerField(body?.last_days, 30, 'last_days', 1, 365);
+  if (lastDays.error || lastDays.value === undefined || lastDays.value === null) return { error: lastDays.error };
+
+  const experienceYears = parseIntegerField(body?.experience_years, 0, 'experience_years', 0, 50, true);
+  if (experienceYears.error || experienceYears.value === undefined) return { error: experienceYears.error };
+
+  const workplaceType = body?.workplace_type === undefined ? 'all' : body.workplace_type;
+  if (!['all', 'remote', 'hybrid', 'on-site'].includes(workplaceType)) {
+    return { error: 'workplace_type must be one of all, remote, hybrid, or on-site.' };
+  }
+
+  return {
+    value: {
+      country: country.value,
+      job_title: jobTitle.value,
+      limit: limit.value,
+      last_days: lastDays.value,
+      experience_years: experienceYears.value,
+      workplace_type: workplaceType
+    }
+  };
+};
+
 // Background polling manager for active python microservice tasks
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
   let consecutiveFailures = 0;
@@ -178,14 +255,12 @@ app.delete('/api/jobs/tasks/:id', async (req, res) => {
 
 // POST /api/jobs/search - Trigger an asynchronous job search
 app.post('/api/jobs/search', async (req, res) => {
-  const { 
-    country = 'Germany', 
-    job_title = 'AI engineer', 
-    limit = 150, 
-    last_days = 30,
-    experience_years = null,
-    workplace_type = 'all'
-  } = req.body;
+  const parsedRequest = parseSearchRequest(req.body);
+  if (!parsedRequest.value) {
+    return res.status(400).json({ error: parsedRequest.error });
+  }
+
+  const { country, job_title, limit, last_days, experience_years, workplace_type } = parsedRequest.value;
   const taskId = uuidv4();
   const createdAt = new Date().toISOString();
   
