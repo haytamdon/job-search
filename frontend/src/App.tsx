@@ -146,6 +146,13 @@ export default function App() {
     if (!window.confirm('Are you sure you want to permanently delete this search log from the database?')) return;
     try {
       await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
+      changeActiveTaskIds(activeTaskIdsRef.current.filter(activeId => activeId !== id));
+      setActiveTasks(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      setSettledTaskIds(prev => prev.filter(settledId => settledId !== id));
       if (selectedTask?.id === id) {
         setSelectedTask(null);
         setParsedJobs([]);
@@ -382,8 +389,11 @@ export default function App() {
           try {
             const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
             return { id, task: response.data };
-          } catch (err) {
+          } catch (err: any) {
             console.error(`Error polling task ${id}:`, err);
+            if (axios.isAxiosError(err) && err.response?.status === 404) {
+              return { id, task: { status: 'FAILED', progress: 'Search task was removed.', error_message: 'Search task was removed.', completed_at: new Date().toISOString() } };
+            }
             return { id, task: null };
           }
         })
