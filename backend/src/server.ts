@@ -9,6 +9,13 @@ const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
 const MICROSERVICE_URL = process.env.MICROSERVICE_URL || `http://localhost:${process.env.AGENT_PORT || '8000'}`;
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
+const MICROSERVICE_TIMEOUT_MS = Number(process.env.MICROSERVICE_TIMEOUT_MS || 10000);
+const MICROSERVICE_HEALTH_TIMEOUT_MS = Number(process.env.MICROSERVICE_HEALTH_TIMEOUT_MS || 3000);
+const MICROSERVICE_SYNC_TIMEOUT_MS = Number(process.env.MICROSERVICE_SYNC_TIMEOUT_MS || 900000);
+const microserviceClient = axios.create({
+  baseURL: MICROSERVICE_URL,
+  timeout: MICROSERVICE_TIMEOUT_MS,
+});
 const activePollers = new Map<string, NodeJS.Timeout>();
 
 app.use(cors());
@@ -115,7 +122,7 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
   const interval = setInterval(async () => {
     try {
       console.log(`Polling status for Python task: ${pythonTaskId} (Local DB ID: ${taskId})`);
-      const response = await axios.get(`${MICROSERVICE_URL}/api/jobs/tasks/${pythonTaskId}`);
+      const response = await microserviceClient.get(`/api/jobs/tasks/${pythonTaskId}`);
       consecutiveFailures = 0;
       const data = response.data;
 
@@ -178,7 +185,7 @@ app.get('/health', async (req, res) => {
     let microserviceStatus = 'offline';
     
     try {
-      const msCheck = await axios.get(`${MICROSERVICE_URL}/`);
+      const msCheck = await microserviceClient.get('/', { timeout: MICROSERVICE_HEALTH_TIMEOUT_MS });
       if (msCheck.status === 200) {
         microserviceStatus = 'online';
       }
@@ -274,7 +281,7 @@ app.post('/api/jobs/search', async (req, res) => {
     
     // 2. Call Python microservice to trigger search
     console.log(`Triggering search on microservice: ${country} - ${job_title}`);
-    const msResponse = await axios.post(`${MICROSERVICE_URL}/api/jobs/search`, {
+    const msResponse = await microserviceClient.post('/api/jobs/search', {
       country,
       job_title,
       limit,
@@ -334,14 +341,14 @@ app.post('/api/jobs/search/sync', async (req, res) => {
     );
     
     // Call Python microservice synchronously
-    const msResponse = await axios.post(`${MICROSERVICE_URL}/api/jobs/search/sync`, {
+    const msResponse = await microserviceClient.post('/api/jobs/search/sync', {
       country,
       job_title,
       limit,
       last_days,
       experience_years,
       workplace_type
-    });
+    }, { timeout: MICROSERVICE_SYNC_TIMEOUT_MS });
     
     const results = msResponse.data.results || {};
     const resultKeys = Object.keys(results);
