@@ -16,13 +16,17 @@ const MAX_POLL_FAILURES = 5;
 const MICROSERVICE_TIMEOUT_MS = Number(process.env.MICROSERVICE_TIMEOUT_MS || 10000);
 const MICROSERVICE_HEALTH_TIMEOUT_MS = Number(process.env.MICROSERVICE_HEALTH_TIMEOUT_MS || 3000);
 const MICROSERVICE_SYNC_TIMEOUT_MS = Number(process.env.MICROSERVICE_SYNC_TIMEOUT_MS || 900000);
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:5174')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const microserviceClient = axios.create({
   baseURL: MICROSERVICE_URL,
   timeout: MICROSERVICE_TIMEOUT_MS,
 });
 const activePollers = new Map<string, NodeJS.Timeout>();
 
-app.use(cors());
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json());
 
 const isValidUuid = (id: string) => validateUuid(id);
