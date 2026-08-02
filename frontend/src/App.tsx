@@ -1079,7 +1079,7 @@ export default function App() {
         {currentView === 'active-scans' && (
           /* ACTIVE SCANS PAGE (Beautiful grid panel displaying all running scans simultaneously) */
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {activeTaskIds.length === 0 ? (
+            {Object.keys(activeTasks).length === 0 ? (
               <div className="panel-card" style={{ padding: '3rem 1.5rem', textAlign: 'center' }}>
                 <Activity size={32} style={{ color: 'var(--text-muted)', margin: '0 auto 1rem', display: 'block' }} />
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-main)' }}>No Active Scans Running</h3>
