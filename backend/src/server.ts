@@ -103,6 +103,7 @@ const parseSearchRequest = (body: any): { value?: SearchInput; error?: string } 
 // Background polling manager for active python microservice tasks
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
   let consecutiveFailures = 0;
+  let isPolling = false;
 
   const stopPolling = (interval: NodeJS.Timeout) => {
     clearInterval(interval);
@@ -120,6 +121,11 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
   };
 
   const interval = setInterval(async () => {
+    if (isPolling) {
+      return;
+    }
+
+    isPolling = true;
     try {
       console.log(`Polling status for Python task: ${pythonTaskId} (Local DB ID: ${taskId})`);
       const response = await microserviceClient.get(`/api/jobs/tasks/${pythonTaskId}`);
@@ -172,6 +178,8 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       if (consecutiveFailures >= MAX_POLL_FAILURES) {
         await failTaskAndStop(interval, 'Search agent polling failed repeatedly.');
       }
+    } finally {
+      isPolling = false;
     }
   }, POLL_INTERVAL_MS);
 
