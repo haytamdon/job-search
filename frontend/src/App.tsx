@@ -409,20 +409,10 @@ export default function App() {
           newlySettledIds.push(id);
           nextActiveTasks[id] = task; // keep in activeTasks so the card stays rendered
         } else if (task.status === 'COMPLETED') {
-          // Only finalise once results are fully written to gateway storage (last step)
-          if (task.result_json !== null || task.result_markdown !== null) {
-            completedIds.push(id);
-            newlySettledIds.push(id);
-            nextActiveTasks[id] = task; // keep card visible briefly before auto-navigate
-            finishedTaskToSelect = task;
-          } else {
-            // Keep task in polling state until results are flushed from the DB
-            nextActiveTasks[id] = {
-              ...task,
-              status: 'RUNNING',
-              progress: 'Finalizing and saving job search results...'
-            };
-          }
+          completedIds.push(id);
+          newlySettledIds.push(id);
+          nextActiveTasks[id] = task; // keep card visible briefly before auto-navigate
+          finishedTaskToSelect = task;
         } else {
           nextActiveTasks[id] = task;
         }
