@@ -316,16 +316,21 @@ app.post('/api/jobs/search', async (req, res) => {
 
 // POST /api/jobs/search/sync - Trigger a synchronous search
 app.post('/api/jobs/search/sync', async (req, res) => {
-  const { country = 'Germany', job_title = 'AI engineer', limit = 150, last_days = 30 } = req.body;
+  const parsedRequest = parseSearchRequest(req.body);
+  if (!parsedRequest.value) {
+    return res.status(400).json({ error: parsedRequest.error });
+  }
+
+  const { country, job_title, limit, last_days, experience_years, workplace_type } = parsedRequest.value;
   const taskId = uuidv4();
   const createdAt = new Date().toISOString();
   
   try {
     // Insert task as PENDING first
     await db.query(
-      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, status, progress, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'RUNNING', 'Running synchronous search...', $6)`,
-      [taskId, country, job_title, limit, last_days, createdAt]
+      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, experience_years, workplace_type, status, progress, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'RUNNING', 'Running synchronous search...', $8)`,
+      [taskId, country, job_title, limit, last_days, experience_years, workplace_type, createdAt]
     );
     
     // Call Python microservice synchronously
@@ -333,7 +338,9 @@ app.post('/api/jobs/search/sync', async (req, res) => {
       country,
       job_title,
       limit,
-      last_days
+      last_days,
+      experience_years,
+      workplace_type
     });
     
     const results = msResponse.data.results || {};
