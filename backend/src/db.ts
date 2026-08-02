@@ -1,4 +1,8 @@
+import path from 'path';
+import dotenv from 'dotenv';
 import { Pool } from 'pg';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const connectionString = process.env.DATABASE_URL || `postgresql://postgres:postgres@localhost:${process.env.DB_PORT || '5432'}/jobsearch`;
 

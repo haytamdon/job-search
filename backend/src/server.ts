@@ -1,8 +1,12 @@
+import path from 'path';
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import { validate as validateUuid, v4 as uuidv4 } from 'uuid';
 import * as db from './db';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
