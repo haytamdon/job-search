@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '3000';
-const API_BASE = import.meta.env.VITE_API_BASE || `http://localhost:${BACKEND_PORT}`;
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? '' : `http://localhost:${BACKEND_PORT}`);
 
 interface TaskHistory {
   id: string;
