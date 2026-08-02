@@ -81,7 +81,7 @@ export default function App() {
   const [workplaceType, setWorkplaceType] = useState('all');
 
   // UI toggles
-  const [showRawLogs, setShowRawLogs] = useState(false);
+  const [expandedLogTaskIds, setExpandedLogTaskIds] = useState<string[]>([]);
 
   // App states
   const [history, setHistory] = useState<TaskHistory[]>([]);
@@ -118,7 +118,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   // A simple tick to force time-based progress bar updates every second
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => {
       setTick(t => t + 1);
@@ -128,7 +128,7 @@ export default function App() {
 
   // Refs
   const pollingRef = useRef<any>(null);
-  const logConsoleEndRef = useRef<HTMLDivElement | null>(null);
+  const logConsoleRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Fetch task history
   const fetchHistory = async () => {
@@ -482,12 +482,15 @@ export default function App() {
     return () => clearInterval(systemInterval);
   }, []);
 
-  // Scroll active console logs to bottom
+  // Scroll expanded diagnostic logs to the bottom when progress changes
   useEffect(() => {
-    if (logConsoleEndRef.current) {
-      logConsoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [activeTasks, showRawLogs, tick]);
+    expandedLogTaskIds.forEach(id => {
+      const consoleEl = logConsoleRefs.current[id];
+      if (consoleEl) {
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+    });
+  }, [activeTasks, expandedLogTaskIds]);
 
   // Trigger search trigger
   const triggerSearch = async (e: React.FormEvent) => {
@@ -1103,6 +1106,7 @@ export default function App() {
                   const isFailed = task.status === 'FAILED';
                   const isCompleted = task.status === 'COMPLETED';
                   const isSettled = settledTaskIds.includes(task.id);
+                  const isLogExpanded = expandedLogTaskIds.includes(task.id);
                   const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status);
                   
                   return (
@@ -1278,14 +1282,24 @@ export default function App() {
                           <button
                             type="button"
                             className="btn-apply"
-                            onClick={() => setShowRawLogs(!showRawLogs)}
+                            onClick={() => {
+                              setExpandedLogTaskIds(prev => (
+                                prev.includes(task.id)
+                                  ? prev.filter(id => id !== task.id)
+                                  : [...prev, task.id]
+                              ));
+                            }}
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
                           >
-                            {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
+                            {isLogExpanded ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
                           </button>
 
-                          {showRawLogs && (
-                            <div className="progress-console" style={{ marginTop: '0.75rem' }}>
+                          {isLogExpanded && (
+                            <div
+                              className="progress-console"
+                              ref={(el) => { logConsoleRefs.current[task.id] = el; }}
+                              style={{ marginTop: '0.75rem' }}
+                            >
                               <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
                                 [{new Date(task.created_at).toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
                               </div>
@@ -1295,7 +1309,6 @@ export default function App() {
                               <div style={{ color: '#10b981', fontWeight: 'bold' }}>
                                 &gt; {task.progress}
                               </div>
-                              <div ref={logConsoleEndRef} />
                             </div>
                           )}
                         </div>
