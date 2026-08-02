@@ -51,6 +51,7 @@ interface ParsedJob {
   date?: string;
   link: string;
   link_url?: string;
+  relocation_details?: string;
 }
 
 export default function App() {
@@ -189,7 +190,7 @@ export default function App() {
   const downloadCSV = () => {
     if (filteredJobs.length === 0) return;
     try {
-      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Classification', 'Apply Link'];
+      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Relocation Details', 'Apply Link'];
       const csvRows = [];
       csvRows.push(headers.join(','));
 
@@ -199,7 +200,7 @@ export default function App() {
           `"${job.company.replace(/"/g, '""')}"`,
           `"${job.location.replace(/"/g, '""')}"`,
           `"${(job.salaryrange || 'N/A').replace(/"/g, '""')}"`,
-          '"Visa Sponsor"',
+          `"${(job.relocation_details || 'N/A').replace(/"/g, '""')}"`,
           `"${(job.link_url || '').replace(/"/g, '""')}"`
         ];
         csvRows.push(row.join(','));
@@ -326,7 +327,8 @@ export default function App() {
           description: jobObj.descriptionsummary || jobObj.description || jobObj.summary || '',
           publishingdate: jobObj.publishingdate || jobObj.date || 'N/A',
           link: jobObj.link || 'Apply Link',
-          link_url: jobObj.link_url || jobObj.url || ''
+          link_url: jobObj.link_url || jobObj.url || '',
+          relocation_details: jobObj.relocationdetails || jobObj.relocation || jobObj.visasupport || 'Visa/relocation support mentioned'
         });
       }
       return jobs;
@@ -350,7 +352,8 @@ export default function App() {
           description: job.description || '',
           publishingdate: job.publishingdate || job.date || 'N/A',
           link: job.link || 'Apply Link',
-          link_url: job.link_url || job.link || ''
+          link_url: job.link_url || job.link || '',
+          relocation_details: job.relocation_details || job.relocationDetails || job.relocation || 'Visa/relocation support mentioned'
         }));
       }
     } catch (err) {
@@ -1450,8 +1453,8 @@ export default function App() {
                                 </div>
                               </td>
                               <td>
-                                <span className="badge badge-relocation">
-                                  Visa Support
+                                <span className="badge badge-relocation" title={job.relocation_details || 'N/A'}>
+                                  {job.relocation_details || 'N/A'}
                                 </span>
                               </td>
                               <td>
