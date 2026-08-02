@@ -181,7 +181,10 @@ app.post('/api/jobs/search', async (req, res) => {
     });
     
     const pythonTaskId = msResponse.data.task_id;
-    
+    if (typeof pythonTaskId !== 'string' || pythonTaskId.trim() === '') {
+      throw new Error('Search agent did not return a valid task id.');
+    }
+
     // 3. Start background polling
     startPollingTask(taskId, pythonTaskId);
     
