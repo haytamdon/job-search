@@ -404,11 +404,11 @@ export default function App() {
         return;
       }
 
-      const nextActiveTasks = { ...activeTasks };
       const completedIds: string[] = [];
       let finishedTaskToSelect: SelectedTaskDetail | null = null;
 
       const newlySettledIds: string[] = [];
+      const taskUpdates: Record<string, SelectedTaskDetail> = {};
 
       results.forEach(({ id, task }) => {
         if (!task) return;
@@ -417,14 +417,14 @@ export default function App() {
           // Stop polling this task, but keep it visible in the panel as FAILED
           completedIds.push(id);
           newlySettledIds.push(id);
-          nextActiveTasks[id] = task; // keep in activeTasks so the card stays rendered
+          taskUpdates[id] = task; // keep in activeTasks so the card stays rendered
         } else if (task.status === 'COMPLETED') {
           completedIds.push(id);
           newlySettledIds.push(id);
-          nextActiveTasks[id] = task; // keep card visible briefly before auto-navigate
+          taskUpdates[id] = task; // keep card visible briefly before auto-navigate
           finishedTaskToSelect = task;
         } else {
-          nextActiveTasks[id] = task;
+          taskUpdates[id] = task;
         }
       });
 
@@ -432,8 +432,16 @@ export default function App() {
         setSettledTaskIds(prev => [...new Set([...prev, ...newlySettledIds])]);
       }
 
-      // Update state for active tasks
-      setActiveTasks(nextActiveTasks);
+      // Update state for active tasks without resurrecting cards that were removed while polling
+      setActiveTasks(prev => {
+        const next = { ...prev };
+        Object.entries(taskUpdates).forEach(([id, task]) => {
+          if (activeTaskIdsRef.current.includes(id) || next[id]) {
+            next[id] = task;
+          }
+        });
+        return next;
+      });
 
       if (completedIds.length > 0) {
         const nextActiveIds = currentIds.filter(id => !completedIds.includes(id));
@@ -454,7 +462,7 @@ export default function App() {
     } catch (err) {
       console.error('Error in batch polling status:', err);
     }
-  }, [activeTasks]);
+  }, []);
 
   // Set up polling interval
   useEffect(() => {
