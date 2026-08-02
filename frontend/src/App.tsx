@@ -117,6 +117,7 @@ export default function App() {
   // UI States
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isSearchDisabled = isSubmitting || health.gateway === 'offline';
 
   // A simple tick to force time-based progress bar updates every second
   const [, setTick] = useState(0);
@@ -609,10 +610,10 @@ export default function App() {
       // CMD+Enter or Ctrl+Enter to trigger search scans
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
-        const searchForm = document.querySelector('sidebar-nav form') || document.querySelector('form');
-        if (searchForm) {
-          searchForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-        }
+        if (isSearchDisabled) return;
+
+        const searchForm = document.querySelector('.sidebar-nav form') as HTMLFormElement | null;
+        searchForm?.requestSubmit();
       }
 
       // CMD+K or '/' to focus matches keyword search match input (only when not typing in form)
@@ -628,7 +629,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredJobs, selectedTask]);
+  }, [filteredJobs, selectedTask, isSearchDisabled]);
 
   return (
     <div className="app-layout">
@@ -829,7 +830,7 @@ export default function App() {
               type="submit"
               className="btn-glow"
               style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
-              disabled={isSubmitting || health.gateway === 'offline'}
+              disabled={isSearchDisabled}
             >
               {isSubmitting ? (
                 <>
