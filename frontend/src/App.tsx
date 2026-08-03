@@ -19,6 +19,10 @@ import {
 
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '3000';
 const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? '' : `http://localhost:${BACKEND_PORT}`);
+const apiClient = axios.create({
+  baseURL: API_BASE,
+  timeout: 15000,
+});
 
 interface TaskHistory {
   id: string;
@@ -135,7 +139,7 @@ export default function App() {
   // Fetch task history
   const fetchHistory = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/api/jobs/history`);
+      const response = await apiClient.get('/api/jobs/history');
       setHistory(response.data);
     } catch (err) {
       console.error('Error fetching history:', err);
@@ -147,7 +151,7 @@ export default function App() {
     e.stopPropagation(); // Prevent card selection click trigger
     if (!window.confirm('Are you sure you want to permanently delete this search log from the database?')) return;
     try {
-      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
+      await apiClient.delete(`/api/jobs/tasks/${id}`);
       changeActiveTaskIds(activeTaskIdsRef.current.filter(activeId => activeId !== id));
       setActiveTasks(prev => {
         const copy = { ...prev };
@@ -170,7 +174,7 @@ export default function App() {
   const cancelActiveScan = async (id: string) => {
     if (!window.confirm('Are you sure you want to cancel and delete this running scan?')) return;
     try {
-      await axios.post(`${API_BASE}/api/jobs/tasks/${id}/cancel`);
+      await apiClient.post(`/api/jobs/tasks/${id}/cancel`);
 
       const nextActiveIds = activeTaskIdsRef.current.filter(activeId => activeId !== id);
       changeActiveTaskIds(nextActiveIds);
@@ -255,7 +259,7 @@ export default function App() {
   // Fetch health check
   const checkSystemHealth = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/health`);
+      const response = await apiClient.get('/health');
       setHealth({
         gateway: 'online',
         database: response.data.database === 'online' ? 'online' : 'error',
@@ -367,7 +371,7 @@ export default function App() {
   // Get specific task detail
   const selectTaskDetail = async (id: string, select = true) => {
     try {
-      const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
+      const response = await apiClient.get(`/api/jobs/tasks/${id}`);
       const taskDetail = response.data;
       if (select) {
         setSelectedTask(taskDetail);
@@ -398,7 +402,7 @@ export default function App() {
       const results = await Promise.all(
         currentIds.map(async (id) => {
           try {
-            const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
+            const response = await apiClient.get(`/api/jobs/tasks/${id}`);
             return { id, task: response.data };
           } catch (err: any) {
             console.error(`Error polling task ${id}:`, err);
@@ -497,7 +501,7 @@ export default function App() {
     setError(null);
 
     try {
-      const response = await axios.post(`${API_BASE}/api/jobs/search`, {
+      const response = await apiClient.post('/api/jobs/search', {
         country,
         job_title: jobTitle,
         limit,
