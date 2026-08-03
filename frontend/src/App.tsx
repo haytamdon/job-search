@@ -123,14 +123,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const isSearchDisabled = isSubmitting || health.gateway === 'offline';
 
-  // A simple tick to force time-based progress bar updates every second
+  // A simple tick to force time-based progress bar updates while scans are active
   const [, setTick] = useState(0);
   useEffect(() => {
+    if (activeTaskIds.length === 0) return;
+
     const interval = setInterval(() => {
       setTick(t => t + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeTaskIds.length]);
 
   // Refs
   const pollingRef = useRef<any>(null);
