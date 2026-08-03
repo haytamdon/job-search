@@ -1,6 +1,7 @@
 from typing import Dict, Optional, Callable
 import os
 import json
+import re
 from mcp_use import MCPAgent, MCPClient
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -8,6 +9,12 @@ from langchain_openrouter import ChatOpenRouter
 
 from models import JobListingsList
 from config import get_mcp_config, llm, llm_structured
+
+def safe_filename_part(value: str) -> str:
+    """Return a safe filename segment for user-provided search fields."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
+    return cleaned.strip("_") or "unknown"
+
 
 async def structure_results(llm: ChatOpenRouter, raw_results: str) -> str:
     """Structure the raw agent output into a JSON string using PydanticOutputParser."""
@@ -83,14 +90,19 @@ async def run_search_logic(
         key = f"{country}_{job_title}"
         results[key] = result_json
         
-        # Backup to disk (markdown and JSON)
-        backup_filename_md = f"jobs1/result_{country}_{job_title.replace(' ', '_')}.md"
-        with open(backup_filename_md, "w", encoding="utf-8") as f:
-            f.write(result_str)
-            
-        backup_filename_json = f"jobs1/result_{country}_{job_title.replace(' ', '_')}.json"
-        with open(backup_filename_json, "w", encoding="utf-8") as f:
-            f.write(result_json)
+        # Backup to disk (markdown and JSON). Backup failures should not fail a completed search.
+        safe_country = safe_filename_part(country)
+        safe_job_title = safe_filename_part(job_title)
+        try:
+            backup_filename_md = f"jobs1/result_{safe_country}_{safe_job_title}.md"
+            with open(backup_filename_md, "w", encoding="utf-8") as f:
+                f.write(result_str)
+
+            backup_filename_json = f"jobs1/result_{safe_country}_{safe_job_title}.json"
+            with open(backup_filename_json, "w", encoding="utf-8") as f:
+                f.write(result_json)
+        except OSError as e:
+            print(f"Warning: failed to write search backup files: {e}")
                     
     finally:
         # Prevent resource/process leaks
