@@ -30,9 +30,7 @@ async def structure_results(llm: ChatOpenRouter, raw_results: str) -> str:
         jobs_list = [job.model_dump() for job in response.jobs]
         return json.dumps(jobs_list, indent=2)
     except Exception as e:
-        print(f"Error structuring results with PydanticOutputParser: {e}")
-        # Fallback to empty list serialized as JSON
-        return json.dumps([])
+        raise RuntimeError(f"Failed to structure search results: {e}") from e
 
 async def run_search_logic(
     country: str, 
