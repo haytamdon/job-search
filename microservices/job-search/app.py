@@ -27,6 +27,29 @@ app.add_middleware(
 # In-memory database for tracking jobs/tasks (Note: gateway persists to PostgreSQL)
 tasks_db: Dict[str, Dict] = {}
 running_tasks: Dict[str, asyncio.Task] = {}
+TASK_TTL_SECONDS = 60 * 60 * 6
+
+
+def cleanup_completed_tasks():
+    """Evict terminal in-memory tasks after a short retention window."""
+    now = datetime.utcnow()
+    expired_task_ids = []
+    for task_id, task in tasks_db.items():
+        if task.get("status") in {"PENDING", "RUNNING"}:
+            continue
+        completed_at = task.get("completed_at")
+        if not completed_at:
+            continue
+        try:
+            completed_time = datetime.fromisoformat(completed_at)
+        except ValueError:
+            continue
+        if (now - completed_time).total_seconds() > TASK_TTL_SECONDS:
+            expired_task_ids.append(task_id)
+
+    for task_id in expired_task_ids:
+        tasks_db.pop(task_id, None)
+        running_tasks.pop(task_id, None)
 
 async def background_search_task(
     task_id: str, 
@@ -84,6 +107,7 @@ async def health_check():
 @app.post("/api/jobs/search", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
 async def trigger_async_search(request: SearchRequest):
     """Trigger an asynchronous LinkedIn job search running in the background."""
+    cleanup_completed_tasks()
     task_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
     
@@ -144,6 +168,7 @@ async def cancel_task(task_id: str):
 @app.get("/api/jobs/tasks/{task_id}", status_code=status.HTTP_200_OK)
 async def get_task_status(task_id: str):
     """Retrieve status and results of a job search task."""
+    cleanup_completed_tasks()
     task = tasks_db.get(task_id)
     if not task:
         raise HTTPException(
