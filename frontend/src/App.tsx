@@ -40,7 +40,6 @@ interface TaskHistory {
 }
 
 interface SelectedTaskDetail extends TaskHistory {
-  result_markdown: string | null;
   result_json?: string | null;
 }
 
@@ -276,76 +275,6 @@ export default function App() {
     }
   };
 
-  // Parse Markdown table returned by MCPAgent
-  const parseJobsMarkdown = (markdown: string | null): ParsedJob[] => {
-    if (!markdown) return [];
-    try {
-      const lines = markdown.trim().split('\n');
-      let tableStartIndex = -1;
-
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes('|') && lines[i].includes('-') && i > 0) {
-          tableStartIndex = i - 1;
-          break;
-        }
-      }
-
-      if (tableStartIndex === -1) return [];
-
-      const headers = lines[tableStartIndex]
-        .split('|')
-        .map(h => h.trim())
-        .filter(h => h !== '');
-
-      const jobs: ParsedJob[] = [];
-      for (let i = tableStartIndex + 2; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line.includes('|')) continue;
-        const cells = line
-          .split('|')
-          .map(c => c.trim())
-          .filter((_, idx) => idx > 0 && idx <= headers.length);
-
-        if (cells.length === 0) continue;
-
-        const jobObj: any = {};
-        headers.forEach((header, index) => {
-          // Normalize header key
-          const key = header.toLowerCase().replace(/[\s_]+/g, '');
-          let val = cells[index] || '';
-
-          // Parse links in markdown [Text](URL)
-          if (val.startsWith('[') && val.includes('](')) {
-            const urlMatch = val.match(/\]\((.*?)\)/);
-            const textMatch = val.match(/\[(.*?)\]/);
-            if (urlMatch) {
-              jobObj[key + '_url'] = urlMatch[1];
-              val = textMatch ? textMatch[1] : urlMatch[1];
-            }
-          }
-          jobObj[key] = val;
-        });
-
-        // Map to structured ParsedJob properties
-        jobs.push({
-          title: jobObj.title || jobObj.jobtitle || 'Job Title',
-          company: jobObj.company || jobObj.employer || 'Company',
-          location: jobObj.location || 'Location',
-          salaryrange: jobObj.salaryrange || jobObj.salary || 'N/A',
-          description: jobObj.descriptionsummary || jobObj.description || jobObj.summary || '',
-          publishingdate: jobObj.publishingdate || jobObj.date || 'N/A',
-          link: jobObj.link || 'Apply Link',
-          link_url: jobObj.link_url || jobObj.url || '',
-          relocation_details: jobObj.relocationdetails || jobObj.relocation || jobObj.visasupport || 'Visa/relocation support mentioned'
-        });
-      }
-      return jobs;
-    } catch (err) {
-      console.error('Failed to parse markdown table:', err);
-      return [];
-    }
-  };
-
   // Parse structured JSON returned by MCPAgent
   const parseJobsJson = (jsonStr: string | null): ParsedJob[] => {
     if (!jsonStr) return [];
@@ -382,9 +311,7 @@ export default function App() {
           return taskDetail;
         }
 
-        const jobs = taskDetail.result_json
-          ? parseJobsJson(taskDetail.result_json)
-          : parseJobsMarkdown(taskDetail.result_markdown);
+        const jobs = parseJobsJson(taskDetail.result_json || null);
         setParsedJobs(jobs);
         setCurrentView('results'); // Switch view when selecting a terminal task from history
       }
@@ -532,7 +459,6 @@ export default function App() {
           workplace_type: workplaceType,
           created_at: new Date().toISOString(),
           completed_at: null,
-          result_markdown: null,
           result_json: null
         }
       }));
