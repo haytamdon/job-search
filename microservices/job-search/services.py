@@ -9,7 +9,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openrouter import ChatOpenRouter
 
 from models import JobListingsList
-from config import get_mcp_config, llm, llm_structured
+from config import get_mcp_config, get_llm, get_structured_llm
 
 MAX_CONCURRENT_SEARCHES = int(os.getenv("MAX_CONCURRENT_SEARCHES", "2"))
 SEARCH_TIMEOUT_SECONDS = int(os.getenv("SEARCH_TIMEOUT_SECONDS", "1800"))
@@ -49,7 +49,9 @@ async def run_search_logic(
     """Execute the MCPAgent LinkedIn Job search logic."""
     config = get_mcp_config()
     client = MCPClient(config=config)
-    
+    llm = get_llm()
+    llm_structured = get_structured_llm()
+
     # Create agent with memory disabled
     agent = MCPAgent(llm=llm, client=client, max_steps=1000, pretty_print=True, memory_enabled=False)
     

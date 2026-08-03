@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import local models, configuration, and services
+from config import get_mcp_config, get_openrouter_api_key
 from models import SearchRequest, TaskResponse
 from services import run_search_logic
 
@@ -98,9 +99,20 @@ async def background_search_task(
 @app.get("/", status_code=status.HTTP_200_OK)
 async def health_check():
     """Health check endpoint."""
+    config_errors = []
+    try:
+        get_openrouter_api_key()
+    except ValueError as e:
+        config_errors.append(str(e))
+    try:
+        get_mcp_config()
+    except ValueError as e:
+        config_errors.append(str(e))
+
     return {
-        "status": "healthy",
+        "status": "degraded" if config_errors else "healthy",
         "service": "LinkedIn Job Search Agent API",
+        "config_errors": config_errors,
         "timestamp": datetime.utcnow().isoformat()
     }
 
