@@ -194,26 +194,35 @@ export default function App() {
 
   // Export matching job listings to CSV
   const downloadCSV = () => {
-    if (filteredJobs.length === 0) return;
+    if (filteredJobs.length === 0) {
+      window.alert('No matching jobs to export.');
+      return;
+    }
+
+    const escapeCsvCell = (value: string) => {
+      const safeValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
+      return `"${safeValue.replace(/"/g, '""')}"`;
+    };
+
     try {
       const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Publishing Date', 'Relocation Details', 'Apply Link'];
       const csvRows = [];
-      csvRows.push(headers.join(','));
+      csvRows.push(headers.map(escapeCsvCell).join(','));
 
       filteredJobs.forEach(job => {
         const row = [
-          `"${job.title.replace(/"/g, '""')}"`,
-          `"${job.company.replace(/"/g, '""')}"`,
-          `"${job.location.replace(/"/g, '""')}"`,
-          `"${(job.salaryrange || 'N/A').replace(/"/g, '""')}"`,
-          `"${(job.publishingdate || job.date || 'N/A').replace(/"/g, '""')}"`,
-          `"${(job.relocation_details || 'N/A').replace(/"/g, '""')}"`,
-          `"${(job.link_url || '').replace(/"/g, '""')}"`
+          escapeCsvCell(job.title),
+          escapeCsvCell(job.company),
+          escapeCsvCell(job.location),
+          escapeCsvCell(job.salaryrange || 'N/A'),
+          escapeCsvCell(job.publishingdate || job.date || 'N/A'),
+          escapeCsvCell(job.relocation_details || 'N/A'),
+          escapeCsvCell(job.link_url || '')
         ];
         csvRows.push(row.join(','));
       });
 
-      const csvContent = csvRows.join('\n');
+      const csvContent = `﻿${csvRows.join('\n')}`;
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -224,6 +233,7 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to export CSV:', err);
     }
