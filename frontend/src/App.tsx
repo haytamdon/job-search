@@ -472,6 +472,30 @@ export default function App() {
     }
   };
 
+  const mentionsRemoteWork = (text: string) => {
+    if (/\b(no|not|without)\s+remote\b/.test(text)) return false;
+    return text.includes('remote') || text.includes('wfh') || text.includes('work from home');
+  };
+
+  const getSalaryMax = (salaryText: string) => {
+    const normalized = salaryText.toLowerCase().replace(/,/g, '');
+    const matches = [...normalized.matchAll(/(\d+(?:\.\d+)?)\s*(k|thousand)?/g)];
+    const values = matches
+      .filter(match => {
+        const token = match[0];
+        const value = Number(match[1]);
+        if (token.includes('401k')) return false;
+        if (!match[2] && value >= 1900 && value <= 2100) return false;
+        return true;
+      })
+      .map(match => {
+        const value = Number(match[1]);
+        return match[2] || value < 1000 ? value * 1000 : value;
+      });
+
+    return values.length > 0 ? Math.max(...values) : null;
+  };
+
   // Filter jobs based on search term and criteria
   const filteredJobs = parsedJobs.filter(job => {
     // 1. Search term match
@@ -488,11 +512,11 @@ export default function App() {
     if (resultsWorkplaceFilter !== 'all') {
       const textToSearch = `${job.location} ${job.title} ${job.description}`.toLowerCase();
       if (resultsWorkplaceFilter === 'remote') {
-        matchesWorkplace = textToSearch.includes('remote') || textToSearch.includes('wfh') || textToSearch.includes('work from home');
+        matchesWorkplace = mentionsRemoteWork(textToSearch);
       } else if (resultsWorkplaceFilter === 'hybrid') {
         matchesWorkplace = textToSearch.includes('hybrid');
       } else if (resultsWorkplaceFilter === 'on-site') {
-        matchesWorkplace = textToSearch.includes('on-site') || textToSearch.includes('onsite') || (!textToSearch.includes('remote') && !textToSearch.includes('hybrid'));
+        matchesWorkplace = textToSearch.includes('on-site') || textToSearch.includes('onsite') || (!mentionsRemoteWork(textToSearch) && !textToSearch.includes('hybrid'));
       }
     }
 
@@ -504,23 +528,9 @@ export default function App() {
       const filterVal = filterNumStr ? parseInt(filterNumStr, 10) : 0;
 
       if (filterVal > 0) {
-        // Try to extract numbers from salaryText
-        const salaryNums = salaryText.replace(/,/g, '').match(/\d+/g);
-        if (salaryNums && salaryNums.length > 0) {
-          const parsedNums = salaryNums.map(n => {
-            let val = parseInt(n, 10);
-            if (val < 1000 && (salaryText.includes('k') || salaryText.includes('thousand'))) {
-              val *= 1000;
-            }
-            return val;
-          });
-          const actualFilterVal = filterVal < 1000 ? filterVal * 1000 : filterVal;
-          const maxSalary = Math.max(...parsedNums);
-          const maxSalaryScaled = maxSalary < 1000 ? maxSalary * 1000 : maxSalary;
-          matchesSalary = maxSalaryScaled >= actualFilterVal;
-        } else {
-          matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
-        }
+        const actualFilterVal = filterVal < 1000 ? filterVal * 1000 : filterVal;
+        const maxSalary = getSalaryMax(salaryText);
+        matchesSalary = maxSalary !== null ? maxSalary >= actualFilterVal : false;
       } else {
         matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
       }
