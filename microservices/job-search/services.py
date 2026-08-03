@@ -2,6 +2,7 @@ from typing import Dict, Optional, Callable
 import os
 import json
 import re
+import asyncio
 from mcp_use import MCPAgent, MCPClient
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -9,6 +10,10 @@ from langchain_openrouter import ChatOpenRouter
 
 from models import JobListingsList
 from config import get_mcp_config, llm, llm_structured
+
+MAX_CONCURRENT_SEARCHES = int(os.getenv("MAX_CONCURRENT_SEARCHES", "2"))
+SEARCH_TIMEOUT_SECONDS = int(os.getenv("SEARCH_TIMEOUT_SECONDS", "1800"))
+search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
 
 def safe_filename_part(value: str) -> str:
     """Return a safe filename segment for user-provided search fields."""
@@ -78,7 +83,8 @@ async def run_search_logic(
             f"Proceed with the approach you find most reliable (you are free to use multiple approaches) and do not ask extra questions"
         )
         
-        result = await agent.run(prompt, max_steps=1500)
+        async with search_semaphore:
+            result = await asyncio.wait_for(agent.run(prompt, max_steps=1500), timeout=SEARCH_TIMEOUT_SECONDS)
         result_str = str(result)
         
         # Structure the raw output using Pydantic output parser
