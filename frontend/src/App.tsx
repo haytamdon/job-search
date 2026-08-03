@@ -1026,6 +1026,29 @@ export default function App() {
               </div>
             </div>
 
+            <div className="panel-card" style={{ marginBottom: '1.5rem' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '0.92rem' }}>Service Health</h3>
+              </div>
+              <div className="card-body">
+                <div className="diagnostics-stack">
+                  {[
+                    ['Gateway API', health.gateway],
+                    ['PostgreSQL Database', health.database],
+                    ['Search Microservice', health.microservice]
+                  ].map(([label, value]) => (
+                    <div className="diagnostic-item" key={label}>
+                      <span>{label}</span>
+                      <span className="diagnostic-status">
+                        <span className={`status-dot ${value === 'online' ? 'online' : value === 'error' ? 'warning' : 'offline'}`} />
+                        {value.toUpperCase()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             <div className="panel-card">
               <div className="card-header">
                 <h3 style={{ fontSize: '0.92rem' }}>Welcome to your AI Career Relocation Assistant</h3>
