@@ -821,7 +821,15 @@ export default function App() {
               history.map((task) => (
                 <div
                   key={task.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectTaskDetail(task.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectTaskDetail(task.id);
+                    }
+                  }}
                   className={`history-item ${selectedTask?.id === task.id ? 'selected' : ''}`}
                   style={{ cursor: 'pointer', marginBottom: '0.5rem' }}
                 >
@@ -830,7 +838,7 @@ export default function App() {
                       {task.job_title}
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
+                      <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} aria-live="polite" style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
                         {task.status}
                       </span>
                       <button
@@ -1094,7 +1102,7 @@ export default function App() {
                           </h3>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`}>
+                          <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} aria-live="polite">
                             {task.status === 'RUNNING' ? 'Running' : task.status === 'PENDING' ? 'Pending' : task.status}
                           </span>
                           {!isSettled && (
