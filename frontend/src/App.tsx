@@ -310,21 +310,19 @@ export default function App() {
   };
 
   // Get specific task detail
-  const selectTaskDetail = async (id: string, select = true) => {
+  const selectTaskDetail = async (id: string) => {
     try {
       const response = await apiClient.get(`/api/jobs/tasks/${id}`);
       const taskDetail = response.data;
-      if (select) {
-        setSelectedTask(taskDetail);
+      setSelectedTask(taskDetail);
         if (taskDetail.status === 'PENDING' || taskDetail.status === 'RUNNING') {
           setCurrentView('active-scans');
           return taskDetail;
         }
 
         const jobs = parseJobsJson(taskDetail.result_json || null);
-        setParsedJobs(jobs);
-        setCurrentView('results'); // Switch view when selecting a terminal task from history
-      }
+      setParsedJobs(jobs);
+      setCurrentView('results'); // Switch view when selecting a terminal task from history
       return taskDetail;
     } catch (err) {
       console.error('Error fetching task details:', err);
@@ -1285,7 +1283,7 @@ export default function App() {
                                 [{new Date(task.created_at).toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
                               </div>
                               <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
-                                [{new Date(task.created_at).toLocaleTimeString()}] Claude 3.5 routing queries to LinkedIn API gateway.
+                                [{new Date(task.created_at).toLocaleTimeString()}] Search agent routing queries to LinkedIn data sources.
                               </div>
                               <div style={{ color: '#10b981', fontWeight: 'bold' }}>
                                 &gt; {task.progress}
@@ -1384,7 +1382,7 @@ export default function App() {
                 </div>
               ) : parsedJobs.length === 0 ? (
                 <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                  No job postings were returned by the AI. This may happen if zero vacancies matched the criteria or if Nginx parsing was interrupted.
+                  No job postings were returned. This may happen if zero vacancies matched the selected criteria.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1 }}>
