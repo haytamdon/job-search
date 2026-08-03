@@ -24,19 +24,26 @@ def get_mcp_config() -> dict:
         }
     }
 
-# Initialize and configure the ChatOpenRouter LLM model instance
-openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-if not openrouter_api_key:
-    raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
+def get_openrouter_api_key() -> str:
+    """Return the configured OpenRouter API key or raise a clear runtime error."""
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
+    return openrouter_api_key
 
-llm = ChatOpenRouter(
-    # model="deepseek/deepseek-v4-flash",
-    model="anthropic/claude-opus-4.8",
-    api_key=openrouter_api_key,
-)
 
-llm_structured = ChatOpenRouter(
-    model="deepseek/deepseek-v4-flash",
-    api_key=openrouter_api_key,
-)
+def create_llm(model: str) -> ChatOpenRouter:
+    """Create a ChatOpenRouter client lazily so the health endpoint can report config errors."""
+    return ChatOpenRouter(
+        model=model,
+        api_key=get_openrouter_api_key(),
+    )
+
+
+def get_llm() -> ChatOpenRouter:
+    return create_llm("anthropic/claude-opus-4.8")
+
+
+def get_structured_llm() -> ChatOpenRouter:
+    return create_llm("deepseek/deepseek-v4-flash")
     

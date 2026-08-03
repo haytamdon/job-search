@@ -1,45 +1,189 @@
+import path from 'path';
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
+import { validate as validateUuid, v4 as uuidv4 } from 'uuid';
 import * as db from './db';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 const port = process.env.PORT || process.env.BACKEND_PORT || 3000;
 const MICROSERVICE_URL = process.env.MICROSERVICE_URL || `http://localhost:${process.env.AGENT_PORT || '8000'}`;
+const POLL_INTERVAL_MS = 4000;
+const MAX_POLL_FAILURES = 5;
+const MICROSERVICE_TIMEOUT_MS = Number(process.env.MICROSERVICE_TIMEOUT_MS || 10000);
+const MICROSERVICE_HEALTH_TIMEOUT_MS = Number(process.env.MICROSERVICE_HEALTH_TIMEOUT_MS || 3000);
+const MICROSERVICE_SYNC_TIMEOUT_MS = Number(process.env.MICROSERVICE_SYNC_TIMEOUT_MS || 900000);
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:5174')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const microserviceClient = axios.create({
+  baseURL: MICROSERVICE_URL,
+  timeout: MICROSERVICE_TIMEOUT_MS,
+});
+const activePollers = new Map<string, NodeJS.Timeout>();
+const activePythonTaskIds = new Map<string, string>();
 
-app.use(cors());
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json());
+
+const isValidUuid = (id: string) => validateUuid(id);
+const VALID_TASK_STATUSES = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED'] as const;
+type TaskStatus = typeof VALID_TASK_STATUSES[number];
+
+interface SearchInput {
+  country: string;
+  job_title: string;
+  limit: number;
+  last_days: number;
+  experience_years: number | null;
+  workplace_type: 'all' | 'remote' | 'hybrid' | 'on-site';
+}
+
+const parseStringField = (value: unknown, fallback: string, field: string, maxLength: number) => {
+  const rawValue = value === undefined ? fallback : value;
+  if (typeof rawValue !== 'string') {
+    return { error: `${field} must be a string.` };
+  }
+
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) {
+    return { error: `${field} must be between 1 and ${maxLength} characters.` };
+  }
+
+  return { value: trimmed };
+};
+
+const parseIntegerField = (
+  value: unknown,
+  fallback: number,
+  field: string,
+  min: number,
+  max: number,
+  nullable = false
+) => {
+  if (nullable && (value === undefined || value === null || value === '')) {
+    return { value: null };
+  }
+
+  const rawValue = value === undefined ? fallback : value;
+  const parsed = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return { error: `${field} must be an integer between ${min} and ${max}.` };
+  }
+
+  return { value: parsed };
+};
+
+const parseTaskStatus = (status: unknown): TaskStatus => {
+  if (typeof status === 'string' && VALID_TASK_STATUSES.includes(status as TaskStatus)) {
+    return status as TaskStatus;
+  }
+
+  return 'FAILED';
+};
+
+const getResultJson = (results: any, country: string, jobTitle: string) => {
+  if (!results || typeof results !== 'object') {
+    return JSON.stringify([]);
+  }
+
+  const expectedKey = `${country}_${jobTitle}`;
+  if (typeof results[expectedKey] === 'string') {
+    return results[expectedKey];
+  }
+
+  const resultValues = Object.values(results).filter((value): value is string => typeof value === 'string');
+  return resultValues[0] || JSON.stringify([]);
+};
+
+const parseSearchRequest = (body: any): { value?: SearchInput; error?: string } => {
+  const country = parseStringField(body?.country, 'Germany', 'country', 100);
+  if (country.error || country.value === undefined) return { error: country.error };
+
+  const jobTitle = parseStringField(body?.job_title, 'AI engineer', 'job_title', 100);
+  if (jobTitle.error || jobTitle.value === undefined) return { error: jobTitle.error };
+
+  const limit = parseIntegerField(body?.limit, 150, 'limit', 1, 500);
+  if (limit.error || limit.value === undefined || limit.value === null) return { error: limit.error };
+
+  const lastDays = parseIntegerField(body?.last_days, 30, 'last_days', 1, 365);
+  if (lastDays.error || lastDays.value === undefined || lastDays.value === null) return { error: lastDays.error };
+
+  const experienceYears = parseIntegerField(body?.experience_years, 0, 'experience_years', 0, 50, true);
+  if (experienceYears.error || experienceYears.value === undefined) return { error: experienceYears.error };
+
+  const workplaceType = body?.workplace_type === undefined ? 'all' : body.workplace_type;
+  if (!['all', 'remote', 'hybrid', 'on-site'].includes(workplaceType)) {
+    return { error: 'workplace_type must be one of all, remote, hybrid, or on-site.' };
+  }
+
+  return {
+    value: {
+      country: country.value,
+      job_title: jobTitle.value,
+      limit: limit.value,
+      last_days: lastDays.value,
+      experience_years: experienceYears.value,
+      workplace_type: workplaceType
+    }
+  };
+};
 
 // Background polling manager for active python microservice tasks
 const startPollingTask = (taskId: string, pythonTaskId: string) => {
+  let consecutiveFailures = 0;
+  let isPolling = false;
+
+  const stopPolling = (interval: NodeJS.Timeout) => {
+    clearInterval(interval);
+    activePollers.delete(taskId);
+    activePythonTaskIds.delete(taskId);
+  };
+
+  const failTaskAndStop = async (interval: NodeJS.Timeout, message: string) => {
+    stopPolling(interval);
+    await db.query(
+      `UPDATE search_tasks
+       SET status = 'FAILED', progress = $1, error_message = $2, completed_at = $3
+       WHERE id = $4`,
+      [message, message, new Date().toISOString(), taskId]
+    );
+  };
+
   const interval = setInterval(async () => {
+    if (isPolling) {
+      return;
+    }
+
+    isPolling = true;
     try {
       console.log(`Polling status for Python task: ${pythonTaskId} (Local DB ID: ${taskId})`);
-      const response = await axios.get(`${MICROSERVICE_URL}/api/jobs/tasks/${pythonTaskId}`);
+      const response = await microserviceClient.get(`/api/jobs/tasks/${pythonTaskId}`);
+      consecutiveFailures = 0;
       const data = response.data;
-      
-      const status = data.status;
-      const progress = data.progress || 'Scanning jobs...';
-      const errorMessage = data.error || null;
+
+      const status = parseTaskStatus(data.status);
+      const progress = data.progress || (status === 'COMPLETED' ? 'Search completed successfully.' : status === 'FAILED' ? 'Search failed.' : 'Scanning jobs...');
+      const errorMessage = data.error || (data.status === status ? null : `Unexpected search agent status: ${data.status}`);
       let completedAt = null;
       let resultJson = null;
-      
+
       if (status === 'COMPLETED') {
         completedAt = new Date().toISOString();
-        const resultKeys = Object.keys(data.results || {});
-        if (resultKeys.length > 0) {
-          resultJson = data.results[resultKeys[0]]; // structured JSON string
-        }
+        resultJson = getResultJson(data.results, data.country || '', data.job_title || '');
       } else if (status === 'FAILED') {
         completedAt = new Date().toISOString();
       }
-      
+
       if (status === 'COMPLETED' || status === 'FAILED') {
-        clearInterval(interval);
+        stopPolling(interval);
         console.log(`Task ${taskId} finished with status: ${status}. Updating database...`);
         await db.query(
-          `UPDATE search_tasks 
+          `UPDATE search_tasks
            SET status = $1, progress = $2, result_json = $3, error_message = $4, completed_at = $5
            WHERE id = $6`,
           [status, progress, resultJson, errorMessage, completedAt, taskId]
@@ -47,17 +191,31 @@ const startPollingTask = (taskId: string, pythonTaskId: string) => {
       } else {
         // Task still running, update progress and status
         await db.query(
-          `UPDATE search_tasks 
+          `UPDATE search_tasks
            SET status = $1, progress = $2
            WHERE id = $3`,
           [status, progress, taskId]
         );
       }
     } catch (err: any) {
+      consecutiveFailures += 1;
       console.error(`Error polling Python task ${pythonTaskId} for Local DB ID ${taskId}:`, err.message);
-      // In case the microservice is unreachable, we do not clear the interval immediately to handle transient network issues.
+
+      if (axios.isAxiosError(err) && err.response?.status === 404) {
+        await failTaskAndStop(interval, 'Search task was lost by the Python microservice.');
+        return;
+      }
+
+      if (consecutiveFailures >= MAX_POLL_FAILURES) {
+        await failTaskAndStop(interval, 'Search agent polling failed repeatedly.');
+      }
+    } finally {
+      isPolling = false;
     }
-  }, 4000);
+  }, POLL_INTERVAL_MS);
+
+  activePollers.set(taskId, interval);
+  activePythonTaskIds.set(taskId, pythonTaskId);
 };
 
 // Health Check
@@ -67,7 +225,7 @@ app.get('/health', async (req, res) => {
     let microserviceStatus = 'offline';
     
     try {
-      const msCheck = await axios.get(`${MICROSERVICE_URL}/`);
+      const msCheck = await microserviceClient.get('/', { timeout: MICROSERVICE_HEALTH_TIMEOUT_MS });
       if (msCheck.status === 200) {
         microserviceStatus = 'online';
       }
@@ -103,6 +261,10 @@ app.get('/api/jobs/history', async (req, res) => {
 
 // GET /api/jobs/tasks/:id - Retrieve status and result of a specific search
 app.get('/api/jobs/tasks/:id', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
   try {
     const result = await db.query('SELECT * FROM search_tasks WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) {
@@ -114,10 +276,64 @@ app.get('/api/jobs/tasks/:id', async (req, res) => {
   }
 });
 
+// POST /api/jobs/tasks/:id/cancel - Cancel an active search task
+app.post('/api/jobs/tasks/:id/cancel', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
+  const poller = activePollers.get(req.params.id);
+  if (poller) {
+    clearInterval(poller);
+    activePollers.delete(req.params.id);
+  }
+  const pythonTaskId = activePythonTaskIds.get(req.params.id);
+  activePythonTaskIds.delete(req.params.id);
+
+  try {
+    const result = await db.query('UPDATE search_tasks SET status = $1, progress = $2, error_message = $3, completed_at = $4 WHERE id = $5 RETURNING *', [
+      'FAILED',
+      'Search cancelled.',
+      'Search cancelled by user.',
+      new Date().toISOString(),
+      req.params.id
+    ]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Search task not found.' });
+    }
+
+    if (pythonTaskId) {
+      await microserviceClient.post(`/api/jobs/tasks/${pythonTaskId}/cancel`).catch((err) => {
+        console.warn(`Could not cancel Python task ${pythonTaskId}:`, err.message);
+      });
+    }
+
+    res.json({ success: true, task: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/jobs/tasks/:id - Delete a specific search task and its results from history
 app.delete('/api/jobs/tasks/:id', async (req, res) => {
+  if (!isValidUuid(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid task id.' });
+  }
+
   try {
-    await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
+    const poller = activePollers.get(req.params.id);
+    if (poller) {
+      clearInterval(poller);
+      activePollers.delete(req.params.id);
+    }
+    activePythonTaskIds.delete(req.params.id);
+
+    const result = await db.query('DELETE FROM search_tasks WHERE id = $1', [req.params.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Search task not found.' });
+    }
+
     res.json({ success: true, message: `Task ${req.params.id} successfully deleted.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -126,14 +342,12 @@ app.delete('/api/jobs/tasks/:id', async (req, res) => {
 
 // POST /api/jobs/search - Trigger an asynchronous job search
 app.post('/api/jobs/search', async (req, res) => {
-  const { 
-    country = 'Germany', 
-    job_title = 'AI engineer', 
-    limit = 150, 
-    last_days = 30,
-    experience_years = null,
-    workplace_type = 'all'
-  } = req.body;
+  const parsedRequest = parseSearchRequest(req.body);
+  if (!parsedRequest.value) {
+    return res.status(400).json({ error: parsedRequest.error });
+  }
+
+  const { country, job_title, limit, last_days, experience_years, workplace_type } = parsedRequest.value;
   const taskId = uuidv4();
   const createdAt = new Date().toISOString();
   
@@ -147,7 +361,7 @@ app.post('/api/jobs/search', async (req, res) => {
     
     // 2. Call Python microservice to trigger search
     console.log(`Triggering search on microservice: ${country} - ${job_title}`);
-    const msResponse = await axios.post(`${MICROSERVICE_URL}/api/jobs/search`, {
+    const msResponse = await microserviceClient.post('/api/jobs/search', {
       country,
       job_title,
       limit,
@@ -157,7 +371,10 @@ app.post('/api/jobs/search', async (req, res) => {
     });
     
     const pythonTaskId = msResponse.data.task_id;
-    
+    if (typeof pythonTaskId !== 'string' || pythonTaskId.trim() === '') {
+      throw new Error('Search agent did not return a valid task id.');
+    }
+
     // 3. Start background polling
     startPollingTask(taskId, pythonTaskId);
     
@@ -186,29 +403,35 @@ app.post('/api/jobs/search', async (req, res) => {
 
 // POST /api/jobs/search/sync - Trigger a synchronous search
 app.post('/api/jobs/search/sync', async (req, res) => {
-  const { country = 'Germany', job_title = 'AI engineer', limit = 150, last_days = 30 } = req.body;
+  const parsedRequest = parseSearchRequest(req.body);
+  if (!parsedRequest.value) {
+    return res.status(400).json({ error: parsedRequest.error });
+  }
+
+  const { country, job_title, limit, last_days, experience_years, workplace_type } = parsedRequest.value;
   const taskId = uuidv4();
   const createdAt = new Date().toISOString();
   
   try {
     // Insert task as PENDING first
     await db.query(
-      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, status, progress, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'RUNNING', 'Running synchronous search...', $6)`,
-      [taskId, country, job_title, limit, last_days, createdAt]
+      `INSERT INTO search_tasks (id, country, job_title, limit_count, last_days, experience_years, workplace_type, status, progress, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'RUNNING', 'Running synchronous search...', $8)`,
+      [taskId, country, job_title, limit, last_days, experience_years, workplace_type, createdAt]
     );
     
     // Call Python microservice synchronously
-    const msResponse = await axios.post(`${MICROSERVICE_URL}/api/jobs/search/sync`, {
+    const msResponse = await microserviceClient.post('/api/jobs/search/sync', {
       country,
       job_title,
       limit,
-      last_days
-    });
+      last_days,
+      experience_years,
+      workplace_type
+    }, { timeout: MICROSERVICE_SYNC_TIMEOUT_MS });
     
     const results = msResponse.data.results || {};
-    const resultKeys = Object.keys(results);
-    const resultJson = resultKeys.length > 0 ? results[resultKeys[0]] : null;
+    const resultJson = getResultJson(results, country, job_title);
     const completedAt = new Date().toISOString();
     
     // Update database as COMPLETED
@@ -242,8 +465,30 @@ app.post('/api/jobs/search/sync', async (req, res) => {
 });
 
 // Bootstrap database and start Express server
-db.bootstrapDatabase().then(() => {
-  app.listen(port, () => {
-    console.log(`TypeScript Gateway server running on port ${port}`);
+db.bootstrapDatabase()
+  .then(() => {
+    const server = app.listen(port, () => {
+      console.log(`TypeScript Gateway server running on port ${port}`);
+    });
+
+    server.on('error', (err) => {
+      console.error('Express server failed:', err);
+      process.exit(1);
+    });
+
+    const shutdown = () => {
+      console.log('Shutting down TypeScript Gateway server...');
+      activePollers.forEach((poller) => clearInterval(poller));
+      activePollers.clear();
+      server.close(() => {
+        db.pool.end().finally(() => process.exit(0));
+      });
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
+  })
+  .catch((err) => {
+    console.error('Failed to bootstrap database:', err);
+    process.exit(1);
   });
-});

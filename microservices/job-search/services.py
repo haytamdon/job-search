@@ -1,13 +1,25 @@
 from typing import Dict, Optional, Callable
 import os
 import json
+import re
+import asyncio
 from mcp_use import MCPAgent, MCPClient
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openrouter import ChatOpenRouter
 
 from models import JobListingsList
-from config import get_mcp_config, llm, llm_structured
+from config import get_mcp_config, get_llm, get_structured_llm
+
+MAX_CONCURRENT_SEARCHES = int(os.getenv("MAX_CONCURRENT_SEARCHES", "2"))
+SEARCH_TIMEOUT_SECONDS = int(os.getenv("SEARCH_TIMEOUT_SECONDS", "1800"))
+search_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SEARCHES)
+
+def safe_filename_part(value: str) -> str:
+    """Return a safe filename segment for user-provided search fields."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
+    return cleaned.strip("_") or "unknown"
+
 
 async def structure_results(llm: ChatOpenRouter, raw_results: str) -> str:
     """Structure the raw agent output into a JSON string using PydanticOutputParser."""
@@ -23,9 +35,7 @@ async def structure_results(llm: ChatOpenRouter, raw_results: str) -> str:
         jobs_list = [job.model_dump() for job in response.jobs]
         return json.dumps(jobs_list, indent=2)
     except Exception as e:
-        print(f"Error structuring results with PydanticOutputParser: {e}")
-        # Fallback to empty list serialized as JSON
-        return json.dumps([])
+        raise RuntimeError(f"Failed to structure search results: {e}") from e
 
 async def run_search_logic(
     country: str, 
@@ -39,7 +49,9 @@ async def run_search_logic(
     """Execute the MCPAgent LinkedIn Job search logic."""
     config = get_mcp_config()
     client = MCPClient(config=config)
-    
+    llm = get_llm()
+    llm_structured = get_structured_llm()
+
     # Create agent with memory disabled
     agent = MCPAgent(llm=llm, client=client, max_steps=1000, pretty_print=True, memory_enabled=False)
     
@@ -73,7 +85,8 @@ async def run_search_logic(
             f"Proceed with the approach you find most reliable (you are free to use multiple approaches) and do not ask extra questions"
         )
         
-        result = await agent.run(prompt, max_steps=1500)
+        async with search_semaphore:
+            result = await asyncio.wait_for(agent.run(prompt, max_steps=1500), timeout=SEARCH_TIMEOUT_SECONDS)
         result_str = str(result)
         
         # Structure the raw output using Pydantic output parser
@@ -83,14 +96,19 @@ async def run_search_logic(
         key = f"{country}_{job_title}"
         results[key] = result_json
         
-        # Backup to disk (markdown and JSON)
-        backup_filename_md = f"jobs1/result_{country}_{job_title.replace(' ', '_')}.md"
-        with open(backup_filename_md, "w", encoding="utf-8") as f:
-            f.write(result_str)
-            
-        backup_filename_json = f"jobs1/result_{country}_{job_title.replace(' ', '_')}.json"
-        with open(backup_filename_json, "w", encoding="utf-8") as f:
-            f.write(result_json)
+        # Backup to disk (markdown and JSON). Backup failures should not fail a completed search.
+        safe_country = safe_filename_part(country)
+        safe_job_title = safe_filename_part(job_title)
+        try:
+            backup_filename_md = f"jobs1/result_{safe_country}_{safe_job_title}.md"
+            with open(backup_filename_md, "w", encoding="utf-8") as f:
+                f.write(result_str)
+
+            backup_filename_json = f"jobs1/result_{safe_country}_{safe_job_title}.json"
+            with open(backup_filename_json, "w", encoding="utf-8") as f:
+                f.write(result_json)
+        except OSError as e:
+            print(f"Warning: failed to write search backup files: {e}")
                     
     finally:
         # Prevent resource/process leaks

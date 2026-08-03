@@ -18,7 +18,11 @@ import {
 } from 'lucide-react';
 
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || '3000';
-const API_BASE = import.meta.env.VITE_API_BASE || `http://localhost:${BACKEND_PORT}`;
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? '' : `http://localhost:${BACKEND_PORT}`);
+const apiClient = axios.create({
+  baseURL: API_BASE,
+  timeout: 15000,
+});
 
 interface TaskHistory {
   id: string;
@@ -36,7 +40,6 @@ interface TaskHistory {
 }
 
 interface SelectedTaskDetail extends TaskHistory {
-  result_markdown: string | null;
   result_json?: string | null;
 }
 
@@ -51,6 +54,7 @@ interface ParsedJob {
   date?: string;
   link: string;
   link_url?: string;
+  relocation_details?: string;
 }
 
 export default function App() {
@@ -81,7 +85,7 @@ export default function App() {
   const [workplaceType, setWorkplaceType] = useState('all');
 
   // UI toggles
-  const [showRawLogs, setShowRawLogs] = useState(false);
+  const [expandedLogTaskIds, setExpandedLogTaskIds] = useState<string[]>([]);
 
   // App states
   const [history, setHistory] = useState<TaskHistory[]>([]);
@@ -116,24 +120,27 @@ export default function App() {
   // UI States
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isSearchDisabled = isSubmitting || health.gateway === 'offline';
 
-  // A simple tick to force time-based progress bar updates every second
-  const [tick, setTick] = useState(0);
+  // A simple tick to force time-based progress bar updates while scans are active
+  const [, setTick] = useState(0);
   useEffect(() => {
+    if (activeTaskIds.length === 0) return;
+
     const interval = setInterval(() => {
       setTick(t => t + 1);
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeTaskIds.length]);
 
   // Refs
   const pollingRef = useRef<any>(null);
-  const logConsoleEndRef = useRef<HTMLDivElement | null>(null);
+  const logConsoleRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Fetch task history
   const fetchHistory = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/api/jobs/history`);
+      const response = await apiClient.get('/api/jobs/history');
       setHistory(response.data);
     } catch (err) {
       console.error('Error fetching history:', err);
@@ -145,7 +152,14 @@ export default function App() {
     e.stopPropagation(); // Prevent card selection click trigger
     if (!window.confirm('Are you sure you want to permanently delete this search log from the database?')) return;
     try {
-      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
+      await apiClient.delete(`/api/jobs/tasks/${id}`);
+      changeActiveTaskIds(activeTaskIdsRef.current.filter(activeId => activeId !== id));
+      setActiveTasks(prev => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      setSettledTaskIds(prev => prev.filter(settledId => settledId !== id));
       if (selectedTask?.id === id) {
         setSelectedTask(null);
         setParsedJobs([]);
@@ -161,8 +175,8 @@ export default function App() {
   const cancelActiveScan = async (id: string) => {
     if (!window.confirm('Are you sure you want to cancel and delete this running scan?')) return;
     try {
-      await axios.delete(`${API_BASE}/api/jobs/tasks/${id}`);
-      
+      await apiClient.post(`/api/jobs/tasks/${id}/cancel`);
+
       const nextActiveIds = activeTaskIdsRef.current.filter(activeId => activeId !== id);
       changeActiveTaskIds(nextActiveIds);
       
@@ -180,25 +194,35 @@ export default function App() {
 
   // Export matching job listings to CSV
   const downloadCSV = () => {
-    if (filteredJobs.length === 0) return;
+    if (filteredJobs.length === 0) {
+      window.alert('No matching jobs to export.');
+      return;
+    }
+
+    const escapeCsvCell = (value: string) => {
+      const safeValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
+      return `"${safeValue.replace(/"/g, '""')}"`;
+    };
+
     try {
-      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Classification', 'Apply Link'];
+      const headers = ['Job Title', 'Company', 'Location', 'Compensation', 'Publishing Date', 'Relocation Details', 'Apply Link'];
       const csvRows = [];
-      csvRows.push(headers.join(','));
+      csvRows.push(headers.map(escapeCsvCell).join(','));
 
       filteredJobs.forEach(job => {
         const row = [
-          `"${job.title.replace(/"/g, '""')}"`,
-          `"${job.company.replace(/"/g, '""')}"`,
-          `"${job.location.replace(/"/g, '""')}"`,
-          `"${(job.salaryrange || 'N/A').replace(/"/g, '""')}"`,
-          '"Visa Sponsor"',
-          `"${(job.link_url || '').replace(/"/g, '""')}"`
+          escapeCsvCell(job.title),
+          escapeCsvCell(job.company),
+          escapeCsvCell(job.location),
+          escapeCsvCell(job.salaryrange || 'N/A'),
+          escapeCsvCell(job.publishingdate || job.date || 'N/A'),
+          escapeCsvCell(job.relocation_details || 'N/A'),
+          escapeCsvCell(job.link_url || '')
         ];
         csvRows.push(row.join(','));
       });
 
-      const csvContent = csvRows.join('\n');
+      const csvContent = `﻿${csvRows.join('\n')}`;
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -209,16 +233,18 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to export CSV:', err);
     }
   };
 
   // Helper to map log progress to step indices (0-4) with time-based progression
-  const getActiveProgressStep = (createdAt: string, progress: string, status: string): number => {
+  const getActiveProgressStep = (createdAt: string, progress: string, status: string, completedAt?: string | null): number => {
     if (status === 'COMPLETED') return 5;
 
-    const elapsedMs = Date.now() - new Date(createdAt).getTime();
+    const referenceTime = status === 'FAILED' && completedAt ? new Date(completedAt).getTime() : Date.now();
+    const elapsedMs = referenceTime - new Date(createdAt).getTime();
     const elapsedSec = Math.max(0, elapsedMs / 1000);
 
     // Time-based steps
@@ -244,7 +270,7 @@ export default function App() {
   // Fetch health check
   const checkSystemHealth = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/health`);
+      const response = await apiClient.get('/health');
       setHealth({
         gateway: 'online',
         database: response.data.database === 'online' ? 'online' : 'error',
@@ -256,75 +282,6 @@ export default function App() {
         database: 'offline',
         microservice: 'offline'
       });
-    }
-  };
-
-  // Parse Markdown table returned by MCPAgent
-  const parseJobsMarkdown = (markdown: string | null): ParsedJob[] => {
-    if (!markdown) return [];
-    try {
-      const lines = markdown.trim().split('\n');
-      let tableStartIndex = -1;
-
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes('|') && lines[i].includes('-') && i > 0) {
-          tableStartIndex = i - 1;
-          break;
-        }
-      }
-
-      if (tableStartIndex === -1) return [];
-
-      const headers = lines[tableStartIndex]
-        .split('|')
-        .map(h => h.trim())
-        .filter(h => h !== '');
-
-      const jobs: ParsedJob[] = [];
-      for (let i = tableStartIndex + 2; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line.includes('|')) continue;
-        const cells = line
-          .split('|')
-          .map(c => c.trim())
-          .filter((_, idx) => idx > 0 && idx <= headers.length);
-
-        if (cells.length === 0) continue;
-
-        const jobObj: any = {};
-        headers.forEach((header, index) => {
-          // Normalize header key
-          const key = header.toLowerCase().replace(/[\s_]+/g, '');
-          let val = cells[index] || '';
-
-          // Parse links in markdown [Text](URL)
-          if (val.startsWith('[') && val.includes('](')) {
-            const urlMatch = val.match(/\]\((.*?)\)/);
-            const textMatch = val.match(/\[(.*?)\]/);
-            if (urlMatch) {
-              jobObj[key + '_url'] = urlMatch[1];
-              val = textMatch ? textMatch[1] : urlMatch[1];
-            }
-          }
-          jobObj[key] = val;
-        });
-
-        // Map to structured ParsedJob properties
-        jobs.push({
-          title: jobObj.title || jobObj.jobtitle || 'Job Title',
-          company: jobObj.company || jobObj.employer || 'Company',
-          location: jobObj.location || 'Location',
-          salaryrange: jobObj.salaryrange || jobObj.salary || 'N/A',
-          description: jobObj.descriptionsummary || jobObj.description || jobObj.summary || '',
-          publishingdate: jobObj.publishingdate || jobObj.date || 'N/A',
-          link: jobObj.link || 'Apply Link',
-          link_url: jobObj.link_url || jobObj.url || ''
-        });
-      }
-      return jobs;
-    } catch (err) {
-      console.error('Failed to parse markdown table:', err);
-      return [];
     }
   };
 
@@ -342,7 +299,8 @@ export default function App() {
           description: job.description || '',
           publishingdate: job.publishingdate || job.date || 'N/A',
           link: job.link || 'Apply Link',
-          link_url: job.link_url || job.link || ''
+          link_url: job.link_url || job.link || '',
+          relocation_details: job.relocation_details || job.relocationDetails || job.relocation || 'Visa/relocation support mentioned'
         }));
       }
     } catch (err) {
@@ -352,18 +310,19 @@ export default function App() {
   };
 
   // Get specific task detail
-  const selectTaskDetail = async (id: string, select = true) => {
+  const selectTaskDetail = async (id: string) => {
     try {
-      const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
+      const response = await apiClient.get(`/api/jobs/tasks/${id}`);
       const taskDetail = response.data;
-      if (select) {
-        setSelectedTask(taskDetail);
-        const jobs = taskDetail.result_json 
-          ? parseJobsJson(taskDetail.result_json) 
-          : parseJobsMarkdown(taskDetail.result_markdown);
-        setParsedJobs(jobs);
-        setCurrentView('results'); // Switch view when selecting a task from history
-      }
+      setSelectedTask(taskDetail);
+        if (taskDetail.status === 'PENDING' || taskDetail.status === 'RUNNING') {
+          setCurrentView('active-scans');
+          return taskDetail;
+        }
+
+        const jobs = parseJobsJson(taskDetail.result_json || null);
+      setParsedJobs(jobs);
+      setCurrentView('results'); // Switch view when selecting a terminal task from history
       return taskDetail;
     } catch (err) {
       console.error('Error fetching task details:', err);
@@ -380,10 +339,13 @@ export default function App() {
       const results = await Promise.all(
         currentIds.map(async (id) => {
           try {
-            const response = await axios.get(`${API_BASE}/api/jobs/tasks/${id}`);
+            const response = await apiClient.get(`/api/jobs/tasks/${id}`);
             return { id, task: response.data };
-          } catch (err) {
+          } catch (err: any) {
             console.error(`Error polling task ${id}:`, err);
+            if (axios.isAxiosError(err) && err.response?.status === 404) {
+              return { id, task: { status: 'FAILED', progress: 'Search task was removed.', error_message: 'Search task was removed.', completed_at: new Date().toISOString() } };
+            }
             return { id, task: null };
           }
         })
@@ -394,11 +356,9 @@ export default function App() {
         return;
       }
 
-      const nextActiveTasks = { ...activeTasks };
       const completedIds: string[] = [];
-      let finishedTaskToSelect: SelectedTaskDetail | null = null;
-
       const newlySettledIds: string[] = [];
+      const taskUpdates: Record<string, SelectedTaskDetail> = {};
 
       results.forEach(({ id, task }) => {
         if (!task) return;
@@ -407,24 +367,13 @@ export default function App() {
           // Stop polling this task, but keep it visible in the panel as FAILED
           completedIds.push(id);
           newlySettledIds.push(id);
-          nextActiveTasks[id] = task; // keep in activeTasks so the card stays rendered
+          taskUpdates[id] = task; // keep in activeTasks so the card stays rendered
         } else if (task.status === 'COMPLETED') {
-          // Only finalise once results are fully written to gateway storage (last step)
-          if (task.result_json !== null || task.result_markdown !== null) {
-            completedIds.push(id);
-            newlySettledIds.push(id);
-            nextActiveTasks[id] = task; // keep card visible briefly before auto-navigate
-            finishedTaskToSelect = task;
-          } else {
-            // Keep task in polling state until results are flushed from the DB
-            nextActiveTasks[id] = {
-              ...task,
-              status: 'RUNNING',
-              progress: 'Finalizing and saving job search results...'
-            };
-          }
+          completedIds.push(id);
+          newlySettledIds.push(id);
+          taskUpdates[id] = task; // keep card visible in active scans until dismissed or selected from history
         } else {
-          nextActiveTasks[id] = task;
+          taskUpdates[id] = task;
         }
       });
 
@@ -432,29 +381,27 @@ export default function App() {
         setSettledTaskIds(prev => [...new Set([...prev, ...newlySettledIds])]);
       }
 
-      // Update state for active tasks
-      setActiveTasks(nextActiveTasks);
+      // Update state for active tasks without resurrecting cards that were removed while polling
+      setActiveTasks(prev => {
+        const next = { ...prev };
+        Object.entries(taskUpdates).forEach(([id, task]) => {
+          if (activeTaskIdsRef.current.includes(id) || next[id]) {
+            next[id] = task;
+          }
+        });
+        return next;
+      });
 
       if (completedIds.length > 0) {
         const nextActiveIds = currentIds.filter(id => !completedIds.includes(id));
         changeActiveTaskIds(nextActiveIds);
         fetchHistory();
 
-        // If an active task finished successfully, select it and show its results
-        if (finishedTaskToSelect) {
-          const task = finishedTaskToSelect as SelectedTaskDetail;
-          setSelectedTask(task);
-          const jobs = task.result_json 
-            ? parseJobsJson(task.result_json) 
-            : parseJobsMarkdown(task.result_markdown);
-          setParsedJobs(jobs);
-          setCurrentView('results');
-        }
       }
     } catch (err) {
       console.error('Error in batch polling status:', err);
     }
-  }, [activeTasks]);
+  }, []);
 
   // Set up polling interval
   useEffect(() => {
@@ -474,12 +421,15 @@ export default function App() {
     return () => clearInterval(systemInterval);
   }, []);
 
-  // Scroll active console logs to bottom
+  // Scroll expanded diagnostic logs to the bottom when progress changes
   useEffect(() => {
-    if (logConsoleEndRef.current) {
-      logConsoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [activeTasks, showRawLogs, tick]);
+    expandedLogTaskIds.forEach(id => {
+      const consoleEl = logConsoleRefs.current[id];
+      if (consoleEl) {
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+    });
+  }, [activeTasks, expandedLogTaskIds]);
 
   // Trigger search trigger
   const triggerSearch = async (e: React.FormEvent) => {
@@ -488,7 +438,7 @@ export default function App() {
     setError(null);
 
     try {
-      const response = await axios.post(`${API_BASE}/api/jobs/search`, {
+      const response = await apiClient.post('/api/jobs/search', {
         country,
         job_title: jobTitle,
         limit,
@@ -513,9 +463,10 @@ export default function App() {
           status: 'PENDING',
           progress: 'Task queued...',
           error_message: null,
+          experience_years: experienceYears !== '' ? Number(experienceYears) : null,
+          workplace_type: workplaceType,
           created_at: new Date().toISOString(),
           completed_at: null,
-          result_markdown: null,
           result_json: null
         }
       }));
@@ -527,6 +478,30 @@ export default function App() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const mentionsRemoteWork = (text: string) => {
+    if (/\b(no|not|without)\s+remote\b/.test(text)) return false;
+    return text.includes('remote') || text.includes('wfh') || text.includes('work from home');
+  };
+
+  const getSalaryMax = (salaryText: string) => {
+    const normalized = salaryText.toLowerCase().replace(/,/g, '');
+    const matches = [...normalized.matchAll(/(\d+(?:\.\d+)?)\s*(k|thousand)?/g)];
+    const values = matches
+      .filter(match => {
+        const token = match[0];
+        const value = Number(match[1]);
+        if (token.includes('401k')) return false;
+        if (!match[2] && value >= 1900 && value <= 2100) return false;
+        return true;
+      })
+      .map(match => {
+        const value = Number(match[1]);
+        return match[2] || value < 1000 ? value * 1000 : value;
+      });
+
+    return values.length > 0 ? Math.max(...values) : null;
   };
 
   // Filter jobs based on search term and criteria
@@ -545,11 +520,11 @@ export default function App() {
     if (resultsWorkplaceFilter !== 'all') {
       const textToSearch = `${job.location} ${job.title} ${job.description}`.toLowerCase();
       if (resultsWorkplaceFilter === 'remote') {
-        matchesWorkplace = textToSearch.includes('remote') || textToSearch.includes('wfh') || textToSearch.includes('work from home');
+        matchesWorkplace = mentionsRemoteWork(textToSearch);
       } else if (resultsWorkplaceFilter === 'hybrid') {
         matchesWorkplace = textToSearch.includes('hybrid');
       } else if (resultsWorkplaceFilter === 'on-site') {
-        matchesWorkplace = textToSearch.includes('on-site') || textToSearch.includes('onsite') || (!textToSearch.includes('remote') && !textToSearch.includes('hybrid'));
+        matchesWorkplace = textToSearch.includes('on-site') || textToSearch.includes('onsite') || (!mentionsRemoteWork(textToSearch) && !textToSearch.includes('hybrid'));
       }
     }
 
@@ -561,23 +536,9 @@ export default function App() {
       const filterVal = filterNumStr ? parseInt(filterNumStr, 10) : 0;
 
       if (filterVal > 0) {
-        // Try to extract numbers from salaryText
-        const salaryNums = salaryText.replace(/,/g, '').match(/\d+/g);
-        if (salaryNums && salaryNums.length > 0) {
-          const parsedNums = salaryNums.map(n => {
-            let val = parseInt(n, 10);
-            if (val < 1000 && (salaryText.includes('k') || salaryText.includes('thousand'))) {
-              val *= 1000;
-            }
-            return val;
-          });
-          const actualFilterVal = filterVal < 1000 ? filterVal * 1000 : filterVal;
-          const maxSalary = Math.max(...parsedNums);
-          const maxSalaryScaled = maxSalary < 1000 ? maxSalary * 1000 : maxSalary;
-          matchesSalary = maxSalaryScaled >= actualFilterVal;
-        } else {
-          matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
-        }
+        const actualFilterVal = filterVal < 1000 ? filterVal * 1000 : filterVal;
+        const maxSalary = getSalaryMax(salaryText);
+        matchesSalary = maxSalary !== null ? maxSalary >= actualFilterVal : false;
       } else {
         matchesSalary = salaryText.includes(resultsMinSalaryFilter.toLowerCase());
       }
@@ -599,10 +560,10 @@ export default function App() {
       // CMD+Enter or Ctrl+Enter to trigger search scans
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
-        const searchForm = document.querySelector('sidebar-nav form') || document.querySelector('form');
-        if (searchForm) {
-          searchForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-        }
+        if (isSearchDisabled) return;
+
+        const searchForm = document.querySelector('.sidebar-nav form') as HTMLFormElement | null;
+        searchForm?.requestSubmit();
       }
 
       // CMD+K or '/' to focus matches keyword search match input (only when not typing in form)
@@ -618,7 +579,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredJobs, selectedTask]);
+  }, [filteredJobs, selectedTask, isSearchDisabled]);
 
   return (
     <div className="app-layout">
@@ -819,7 +780,7 @@ export default function App() {
               type="submit"
               className="btn-glow"
               style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
-              disabled={isSubmitting || health.gateway === 'offline'}
+              disabled={isSearchDisabled}
             >
               {isSubmitting ? (
                 <>
@@ -858,7 +819,15 @@ export default function App() {
               history.map((task) => (
                 <div
                   key={task.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectTaskDetail(task.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectTaskDetail(task.id);
+                    }
+                  }}
                   className={`history-item ${selectedTask?.id === task.id ? 'selected' : ''}`}
                   style={{ cursor: 'pointer', marginBottom: '0.5rem' }}
                 >
@@ -867,7 +836,7 @@ export default function App() {
                       {task.job_title}
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                      <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
+                      <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} aria-live="polite" style={{ fontSize: '0.62rem', padding: '0.1rem 0.35rem' }}>
                         {task.status}
                       </span>
                       <button
@@ -1055,6 +1024,29 @@ export default function App() {
               </div>
             </div>
 
+            <div className="panel-card" style={{ marginBottom: '1.5rem' }}>
+              <div className="card-header">
+                <h3 style={{ fontSize: '0.92rem' }}>Service Health</h3>
+              </div>
+              <div className="card-body">
+                <div className="diagnostics-stack">
+                  {[
+                    ['Gateway API', health.gateway],
+                    ['PostgreSQL Database', health.database],
+                    ['Search Microservice', health.microservice]
+                  ].map(([label, value]) => (
+                    <div className="diagnostic-item" key={label}>
+                      <span>{label}</span>
+                      <span className="diagnostic-status">
+                        <span className={`status-dot ${value === 'online' ? 'online' : value === 'error' ? 'warning' : 'offline'}`} />
+                        {value.toUpperCase()}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             <div className="panel-card">
               <div className="card-header">
                 <h3 style={{ fontSize: '0.92rem' }}>Welcome to your AI Career Relocation Assistant</h3>
@@ -1079,7 +1071,7 @@ export default function App() {
         {currentView === 'active-scans' && (
           /* ACTIVE SCANS PAGE (Beautiful grid panel displaying all running scans simultaneously) */
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {activeTaskIds.length === 0 ? (
+            {Object.keys(activeTasks).length === 0 ? (
               <div className="panel-card" style={{ padding: '3rem 1.5rem', textAlign: 'center' }}>
                 <Activity size={32} style={{ color: 'var(--text-muted)', margin: '0 auto 1rem', display: 'block' }} />
                 <h3 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-main)' }}>No Active Scans Running</h3>
@@ -1093,7 +1085,8 @@ export default function App() {
                   const isFailed = task.status === 'FAILED';
                   const isCompleted = task.status === 'COMPLETED';
                   const isSettled = settledTaskIds.includes(task.id);
-                  const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status);
+                  const isLogExpanded = expandedLogTaskIds.includes(task.id);
+                  const currentStep = getActiveProgressStep(task.created_at, task.progress, task.status, task.completed_at);
                   
                   return (
                     <div key={task.id} className="panel-card" style={{
@@ -1130,7 +1123,7 @@ export default function App() {
                           </h3>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`}>
+                          <span className={`badge badge-status badge-status-${task.status.toLowerCase()}`} aria-live="polite">
                             {task.status === 'RUNNING' ? 'Running' : task.status === 'PENDING' ? 'Pending' : task.status}
                           </span>
                           {!isSettled && (
@@ -1268,24 +1261,33 @@ export default function App() {
                           <button
                             type="button"
                             className="btn-apply"
-                            onClick={() => setShowRawLogs(!showRawLogs)}
+                            onClick={() => {
+                              setExpandedLogTaskIds(prev => (
+                                prev.includes(task.id)
+                                  ? prev.filter(id => id !== task.id)
+                                  : [...prev, task.id]
+                              ));
+                            }}
                             style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
                           >
-                            {showRawLogs ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
+                            {isLogExpanded ? 'Hide Technical Diagnostic Details' : 'Show Technical Diagnostic Details'}
                           </button>
 
-                          {showRawLogs && (
-                            <div className="progress-console" style={{ marginTop: '0.75rem' }}>
+                          {isLogExpanded && (
+                            <div
+                              className="progress-console"
+                              ref={(el) => { logConsoleRefs.current[task.id] = el; }}
+                              style={{ marginTop: '0.75rem' }}
+                            >
                               <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
                                 [{new Date(task.created_at).toLocaleTimeString()}] Pipeline triggered. Bootstrapping MCP server environments.
                               </div>
                               <div style={{ marginBottom: '0.2rem', color: 'var(--text-muted)' }}>
-                                [{new Date(task.created_at).toLocaleTimeString()}] Claude 3.5 routing queries to LinkedIn API gateway.
+                                [{new Date(task.created_at).toLocaleTimeString()}] Search agent routing queries to LinkedIn data sources.
                               </div>
                               <div style={{ color: '#10b981', fontWeight: 'bold' }}>
                                 &gt; {task.progress}
                               </div>
-                              <div ref={logConsoleEndRef} />
                             </div>
                           )}
                         </div>
@@ -1380,7 +1382,7 @@ export default function App() {
                 </div>
               ) : parsedJobs.length === 0 ? (
                 <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                  No job postings were returned by the AI. This may happen if zero vacancies matched the criteria or if Nginx parsing was interrupted.
+                  No job postings were returned. This may happen if zero vacancies matched the selected criteria.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', flex: 1 }}>
@@ -1397,6 +1399,7 @@ export default function App() {
                             <th>Company</th>
                             <th>City / Country</th>
                             <th>Salary Estimate</th>
+                            <th>Published</th>
                             <th>Description Summary</th>
                             <th>Relocation Support</th>
                             <th>Apply Link</th>
@@ -1409,6 +1412,7 @@ export default function App() {
                               <td>{job.company}</td>
                               <td>{job.location}</td>
                               <td style={{ color: 'var(--warning)', fontWeight: 500 }}>{job.salaryrange}</td>
+                              <td>{job.publishingdate || job.date || 'N/A'}</td>
                               <td>
                                 <div style={{
                                   maxWidth: '240px',
@@ -1426,8 +1430,8 @@ export default function App() {
                                 </div>
                               </td>
                               <td>
-                                <span className="badge badge-relocation">
-                                  Visa Support
+                                <span className="badge badge-relocation" title={job.relocation_details || 'N/A'}>
+                                  {job.relocation_details || 'N/A'}
                                 </span>
                               </td>
                               <td>
