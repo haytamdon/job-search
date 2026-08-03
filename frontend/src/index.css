@@ -104,6 +104,7 @@ body {
 .main-workspace {
   flex: 1;
   height: 100%;
+  min-width: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -645,3 +646,42 @@ input[type="range"]:focus::-webkit-slider-thumb {
 }
 
 
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .sidebar-nav {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--panel-border);
+  }
+
+  .main-workspace {
+    height: auto;
+    min-height: 60vh;
+    padding: 1rem;
+  }
+
+  .workspace-header,
+  .card-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .workspace-tabs {
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
